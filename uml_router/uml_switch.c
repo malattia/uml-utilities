@@ -1,4 +1,4 @@
-/* Copyright 2001 Jeff Dike and others
+/* Copyright 2001, 2002 Jeff Dike and others
  * Licensed under the GPL
  */
 
@@ -49,9 +49,22 @@ struct request_v1 {
   } u;
 };
 
+struct request_v2 {
+  unsigned long magic;
+  int version;
+  enum request_type type;
+  struct sockaddr_un sock;
+};
+
+struct reply_v2 {
+  unsigned char mac[ETH_ALEN];
+  struct sockaddr_un sock;
+};
+
 union request {
   struct request_v0 v0;
   struct request_v1 v1;
+  struct request_v2 v2;
 };
 
 struct packet {
@@ -273,6 +286,46 @@ static void new_connection_v1(int fd, struct connection *conn,
   }
 }
 
+static unsigned long start_range = 0;
+static unsigned long end_range = 0xfffffffe;
+static unsigned long current = 0;
+
+static void new_connection_v2(int fd, struct connection *conn, 
+			      struct request_v2 *req)
+{
+  struct connection *new;
+  struct reply_v2 reply;
+  int n;
+
+  switch(req->type){
+  case REQ_NEW_CONTROL:
+    if(current > end_range){
+      fprintf(stderr, "Out of MACs\n");
+      close(fd);
+      return;
+    }
+    reply.mac[0] = 0xfe;
+    reply.mac[1] = 0xfd;
+    reply.mac[2] = current >> 24;
+    reply.mac[3] = (current >> 16) & 0xff;
+    reply.mac[4] = (current >> 8) & 0xff;
+    reply.mac[5] = current & 0xff;
+    new = setup_connection(fd, reply.mac, &req->sock);
+    if(new == NULL) return;
+    reply.sock = data_sun;
+    n = write(fd, &reply, sizeof(reply));
+    if(n != sizeof(reply)){
+      perror("Sending reply");
+      free_connection(new);
+    }
+    current++;
+    break;
+  default:
+    printf("Bad request type : %d\n", req->type);
+    close_descriptor(fd);
+  }
+}
+
 static void new_connection(int fd)
 {
   union request req;
@@ -292,7 +345,13 @@ static void new_connection(int fd)
     close_descriptor(fd);
     return;
   }
-  if(req.v1.magic == SWITCH_MAGIC) new_connection_v1(fd, conn, &req.v1);
+  if(req.v1.magic == SWITCH_MAGIC){
+    if(req.v2.version == 2) new_connection_v2(fd, conn, &req.v2);
+    else if(req.v2.version > 2) 
+      fprintf(stderr, "Request for a version %d connection, which this "
+	      "uml_switch doesn't support\n", req.v2.version);
+    else new_connection_v1(fd, conn, &req.v1);
+  }
   else new_connection_v0(fd, conn, &req.v0);
 }
 
@@ -351,7 +410,7 @@ int still_used(struct sockaddr_un *sun)
   return(ret);
 }
 
-int bind_socket(int fd, const char *name)
+int bind_socket(int fd, const char *name, struct sockaddr_un *sock_out)
 {
   struct sockaddr_un sun;
 
@@ -365,6 +424,7 @@ int bind_socket(int fd, const char *name)
       return(EPERM);
     }
   }
+  if(sock_out != NULL) *sock_out = sun;
   return(0);
 }
 
@@ -377,15 +437,17 @@ void bind_sockets_v0(int ctl_fd, const char *ctl_name,
   int data_err, data_present = 0, data_used = 0;
   int try_remove_ctl, try_remove_data;
 
-  ctl_err = bind_socket(ctl_fd, ctl_name);
+  ctl_err = bind_socket(ctl_fd, ctl_name, NULL);
   if(ctl_err != 0) ctl_present = 1;
   if(ctl_err == EADDRINUSE) ctl_used = 1;
 
-  data_err = bind_socket(data_fd, data_name);
+  data_err = bind_socket(data_fd, data_name, &data_sun);
   if(data_err != 0) data_present = 1;
   if(data_err == EADDRINUSE) data_used = 1;
 
-  if(!ctl_err && !data_err) return;
+  if(!ctl_err && !data_err){
+    return;
+  }
 
   try_remove_ctl = ctl_present;
   try_remove_data = data_present;
@@ -454,7 +516,7 @@ void bind_sockets(int ctl_fd, const char *ctl_name, int data_fd)
 {
   int err, used;
 
-  err = bind_socket(ctl_fd, ctl_name);
+  err = bind_socket(ctl_fd, ctl_name, NULL);
   if(err == 0){
     bind_data_socket(data_fd, &data_sun);
     return;
@@ -517,6 +579,8 @@ int main(int argc, char **argv)
     }
     else Usage();
   }
+
+  current = start_range;
   
   if((connect_fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0){
     perror("socket");
@@ -573,12 +637,16 @@ int main(int argc, char **argv)
       if(fds[i].fd == 0){
 	if(fds[i].revents & POLLHUP){
 	  printf("EOF on stdin, cleaning up and exiting\n");
-	  break;
+	  goto out;
 	}
 	n = read(0, buf, sizeof(buf));
 	if(n < 0){
 	  perror("Reading from stdin");
 	  break;
+	}
+	else if(n == 0){
+	  printf("EOF on stdin, cleaning up and exiting\n");
+	  goto out;
 	}
       }
       else if(fds[i].fd == connect_fd){
@@ -592,6 +660,7 @@ int main(int argc, char **argv)
       else handle_connection(fds[i].fd);
     }
   }
+ out:
   cleanup();
   return 0;
 }
