@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/param.h>
+#include <sys/user.h>
 #include <netinet/in.h>
 
 #include "cow.h"
@@ -33,22 +34,80 @@ struct cow_header_v2 {
 	int sectorsize;
 };
 
+/* Define PATH_LEN_V3 as the usual value of MAXPATHLEN, just hard-code it in 
+ * case other systems have different values for MAXPATHLEN
+ */
+#define PATH_LEN_V3 4096
+
+/* Changes from V2 - 
+ *	PATH_LEN_V3 as described above
+ *	Explicitly specify field bit lengths for systems with different
+ *		lengths for the usual C types.  Not sure whether char or
+ *		time_t should be changed, this can be changed later without
+ *		breaking compatibility
+ *	Add alignment field so that different alignments can be used for the
+ *		bitmap and data
+ * 	Add cow_format field to allow for the possibility of different ways
+ *		of specifying the COW blocks.  For now, the only value is 0,
+ * 		for the traditional COW bitmap.
+ *	Move the backing_file field to the end of the header.  This allows
+ *		for the possibility of expanding it into the padding required
+ *		by the bitmap alignment.
+ * 	The bitmap and data portions of the file will be aligned as specified
+ * 		by the alignment field.  This is to allow COW files to be
+ *		put on devices with restrictions on access alignments, such as
+ *		/dev/raw, with a 512 byte alignment restriction.  This also
+ *		allows the data to be more aligned more strictly than on
+ *		sector boundaries.  This is needed for ubd-mmap, which needs
+ *		the data to be page aligned.
+ *	Fixed (finally!) the rounding bug
+ */
+
+struct cow_header_v3 {
+	__u32 magic;
+	__u32 version;
+	time_t mtime;
+	__u64 size;
+	__u32 sectorsize;
+	__u32 alignment;
+	__u32 cow_format;
+	char backing_file[PATH_LEN_V3];
+};
+
+/* COW format definitions - for now, we have only the usual COW bitmap */
+#define COW_BITMAP 0
+
 union cow_header {
 	struct cow_header_v1 v1;
 	struct cow_header_v2 v2;
+	struct cow_header_v3 v3;
 };
 
 #define COW_MAGIC 0x4f4f4f4d  /* MOOO */
-#define COW_VERSION 2
+#define COW_VERSION 3
 
-void cow_sizes(__u64 size, int sectorsize, int bitmap_offset, 
-	       unsigned long *bitmap_len_out, int *data_offset_out)
+#define DIV_ROUND(x, len) (((x) + (len) - 1) / (len))
+#define ROUND_UP(x, align) DIV_ROUND(x, align) * (align)
+
+void cow_sizes(int version, __u64 size, int sectorsize, int align, 
+	       int bitmap_offset, unsigned long *bitmap_len_out, 
+	       int *data_offset_out)
 {
-	*bitmap_len_out = (size + sectorsize - 1) / (8 * sectorsize);
+	if(version < 3){
+		*bitmap_len_out = (size + sectorsize - 1) / (8 * sectorsize);
 
-	*data_offset_out = bitmap_offset + *bitmap_len_out;
-	*data_offset_out = (*data_offset_out + sectorsize - 1) / sectorsize;
-	*data_offset_out *= sectorsize;
+		*data_offset_out = bitmap_offset + *bitmap_len_out;
+		*data_offset_out = (*data_offset_out + sectorsize - 1) / 
+			sectorsize;
+		*data_offset_out *= sectorsize;
+	}
+	else {
+		*bitmap_len_out = DIV_ROUND(size, sectorsize);
+		*bitmap_len_out = DIV_ROUND(*bitmap_len_out, 8);
+
+		*data_offset_out = bitmap_offset + *bitmap_len_out;
+		*data_offset_out = ROUND_UP(*data_offset_out, align);
+	}
 }
 
 static int absolutize(char *to, int size, char *from)
@@ -99,9 +158,9 @@ static int absolutize(char *to, int size, char *from)
 }
 
 int write_cow_header(char *cow_file, int fd, char *backing_file, 
-		     int sectorsize, long long *size)
+		     int sectorsize, int alignment, long long *size)
 {
-        struct cow_header_v2 *header;
+        struct cow_header_v3 *header;
 	struct stat64 buf;
 	int err;
 
@@ -115,7 +174,7 @@ int write_cow_header(char *cow_file, int fd, char *backing_file,
 	err = -ENOMEM;
 	header = cow_malloc(sizeof(*header));
 	if(header == NULL){
-		cow_printf("Failed to allocate COW V2 header\n");
+		cow_printf("Failed to allocate COW V3 header\n");
 		goto out;
 	}
 	header->magic = htonl(COW_MAGIC);
@@ -151,6 +210,8 @@ int write_cow_header(char *cow_file, int fd, char *backing_file,
 	header->mtime = htonl(buf.st_mtime);
 	header->size = htonll(*size);
 	header->sectorsize = htonl(sectorsize);
+	header->alignment = htonl(alignment);
+	header->cow_format = COW_BITMAP;
 
 	err = write(fd, header, sizeof(*header));
 	if(err != sizeof(*header)){
@@ -165,9 +226,20 @@ int write_cow_header(char *cow_file, int fd, char *backing_file,
 	return(err);
 }
 
-int read_cow_header(int fd, __u32 *magic_out, char **backing_file_out, 
+int file_reader(__u64 offset, char *buf, int len, void *arg)
+{
+	int fd = *((int *) arg);
+
+	return(pread(fd, buf, len, offset));
+}
+
+/* XXX Need to sanity-check the values read from the header */
+
+int read_cow_header(int (*reader)(__u64, char *, int, void *), void *arg, 
+		    __u32 *version_out, char **backing_file_out, 
 		    time_t *mtime_out, __u64 *size_out, 
-		    int *sectorsize_out, int *bitmap_offset_out)
+		    int *sectorsize_out, __u32 *align_out, 
+		    int *bitmap_offset_out)
 {
 	union cow_header *header;
 	char *file;
@@ -180,7 +252,7 @@ int read_cow_header(int fd, __u32 *magic_out, char **backing_file_out,
 		return(-ENOMEM);
 	}
 	err = -EINVAL;
-	n = read(fd, header, sizeof(*header));
+	n = (*reader)(0, (char *) header, sizeof(*header), arg);
 	if(n < offsetof(typeof(header->v1), backing_file)){
 		cow_printf("read_cow_header - short header\n");
 		goto out;
@@ -193,9 +265,10 @@ int read_cow_header(int fd, __u32 *magic_out, char **backing_file_out,
 	else if(magic == ntohl(COW_MAGIC)){
 		version = ntohl(header->v1.version);
 	}
+	/* No error printed because the non-COW case comes through here */
 	else goto out;
 
-	*magic_out = COW_MAGIC;
+	*version_out = version;
 
 	if(version == 1){
 		if(n < sizeof(header->v1)){
@@ -207,6 +280,7 @@ int read_cow_header(int fd, __u32 *magic_out, char **backing_file_out,
 		*size_out = header->v1.size;
 		*sectorsize_out = header->v1.sectorsize;
 		*bitmap_offset_out = sizeof(header->v1);
+		*align_out = *sectorsize_out;
 		file = header->v1.backing_file;
 	}
 	else if(version == 2){
@@ -219,11 +293,25 @@ int read_cow_header(int fd, __u32 *magic_out, char **backing_file_out,
 		*size_out = ntohll(header->v2.size);
 		*sectorsize_out = ntohl(header->v2.sectorsize);
 		*bitmap_offset_out = sizeof(header->v2);
+		*align_out = *sectorsize_out;
 		file = header->v2.backing_file;
+	}
+	else if(version == 3){
+		if(n < sizeof(header->v3)){
+			cow_printf("read_cow_header - failed to read V2 "
+				   "header\n");
+			goto out;
+		}
+		*mtime_out = ntohl(header->v3.mtime);
+		*size_out = ntohll(header->v3.size);
+		*sectorsize_out = ntohl(header->v3.sectorsize);
+		*align_out = ntohl(header->v3.alignment);
+		*bitmap_offset_out = ROUND_UP(sizeof(header->v3), *align_out);
+		file = header->v3.backing_file;
 	}
 	else {
 		cow_printf("read_cow_header - invalid COW version\n");
-		goto out;
+		goto out;		
 	}
 	err = -ENOMEM;
 	*backing_file_out = cow_strdup(file);
@@ -239,24 +327,25 @@ int read_cow_header(int fd, __u32 *magic_out, char **backing_file_out,
 }
 
 int init_cow_file(int fd, char *cow_file, char *backing_file, int sectorsize,
-		  int *bitmap_offset_out, unsigned long *bitmap_len_out, 
-		  int *data_offset_out)
+		  int alignment, int *bitmap_offset_out, 
+		  unsigned long *bitmap_len_out, int *data_offset_out)
 {
 	__u64 size, offset;
 	char zero = 0;
 	int err;
 
-	err = write_cow_header(cow_file, fd, backing_file, sectorsize, &size);
+	err = write_cow_header(cow_file, fd, backing_file, sectorsize, 
+			       alignment, &size);
 	if(err) 
 		goto out;
 	
-	cow_sizes(size, sectorsize, sizeof(struct cow_header_v2), 
+	*bitmap_offset_out = ROUND_UP(sizeof(struct cow_header_v3), alignment);
+	cow_sizes(COW_VERSION, size, sectorsize, alignment, *bitmap_offset_out,
 		  bitmap_len_out, data_offset_out);
-	*bitmap_offset_out = sizeof(struct cow_header_v2);
 
 	offset = *data_offset_out + size - sizeof(zero);
 	err = cow_seek_file(fd, offset);
-	if(err != 0){
+	if(err){
 		cow_printf("cow bitmap lseek failed : errno = %d\n", errno);
 		goto out;
 	}

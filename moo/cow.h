@@ -14,15 +14,22 @@
 #endif
 
 extern int init_cow_file(int fd, char *cow_file, char *backing_file, 
-			 int sectorsize, int *bitmap_offset_out, 
+			 int sectorsize, int alignment, int *bitmap_offset_out, 
 			 unsigned long *bitmap_len_out, int *data_offset_out);
-extern int read_cow_header(int fd, __u32 *magic_out, char **backing_file_out, 
-			   time_t *mtime_out, __u64 *size_out, 
-			   int *sectorsize_out, int *bitmap_offset_out);
+
+extern int file_reader(__u64 offset, char *buf, int len, void *arg);
+extern int read_cow_header(int (*reader)(__u64, char *, int, void *), 
+			   void *arg, __u32 *version_out, 
+			   char **backing_file_out, time_t *mtime_out, 
+			   __u64 *size_out, int *sectorsize_out, 
+			   __u32 *align_out, int *bitmap_offset_out);
+
 extern int write_cow_header(char *cow_file, int fd, char *backing_file, 
-			    int sectorsize, long long *size);
-extern void cow_sizes(__u64 size, int sectorsize, int bitmap_offset, 
-		      unsigned long *bitmap_len_out, int *data_offset_out);
+			    int sectorsize, int alignment, long long *size);
+
+extern void cow_sizes(int version, __u64 size, int sectorsize, int align,
+		      int bitmap_offset, unsigned long *bitmap_len_out, 
+		      int *data_offset_out);
 
 #endif
 

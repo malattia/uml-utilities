@@ -47,8 +47,8 @@ int create_backing_file(char *in, char *out)
 	int sectors;
 	void *sector, *zeros;
 	__u64 size, offset, i; /* i is u64 to prevent 32 bit overflow */
+	__u32 version, alignment;
 	int data_offset;
-        __u32 magic;
         char *backing_file;
         time_t mtime;
         int sectorsize, bitmap_offset, perms, n;
@@ -58,8 +58,9 @@ int create_backing_file(char *in, char *out)
 		exit(1);
 	}
 
-	if(read_cow_header(cow_fd, &magic, &backing_file, &mtime, &size,
-			   &sectorsize, &bitmap_offset)){
+	if(read_cow_header(file_reader, &cow_fd, &version, &backing_file, 
+			   &mtime, &size, &sectorsize, &alignment,
+			   &bitmap_offset)){
 		fprintf(stderr, "Reading COW header failed\n");
 		exit(1);
 	}
@@ -70,13 +71,14 @@ int create_backing_file(char *in, char *out)
 	}
 	if(buf.st_size != size){
 		fprintf(stderr,"Size mismatch (%ld vs %ld) of COW header "
-			"vs backing file\n", (long int) size, 
-			(long int) buf.st_size);
+			"vs backing file \"%s\"\n", (long int) size, 
+			(long int) buf.st_size, backing_file);
 		exit(1);
 	}
 	if(buf.st_mtime != mtime) {
 		fprintf(stderr,"mtime mismatch (%ld vs %ld) of COW "
-			"header vs backing file\n", mtime, buf.st_mtime);
+			"header vs backing file \"%s\"\n", mtime, buf.st_mtime,
+			backing_file);
 		exit(1);
 	}
 
@@ -95,7 +97,8 @@ int create_backing_file(char *in, char *out)
 	}
 	else out_fd = back_fd;
 
-	cow_sizes(size, sectorsize, bitmap_offset, &bitmap_len, &data_offset);
+	cow_sizes(version, size, sectorsize, alignment, bitmap_offset, 
+		  &bitmap_len, &data_offset);
 		
 	bitmap = (unsigned long *) malloc(bitmap_len);
 	if(bitmap == NULL) {
