@@ -263,12 +263,12 @@ void ethertap_v4(int argc, char **argv)
   int data_fd;
   struct output output = INIT_OUTPUT;
 
-  if(argc < 3){
+  if(argc < 2){
     add_output(&output, "uml_net : Too few arguments to ethertap_v4\n", -1);
     output_fail(&output, 1);
   }
   dev = argv[0];
   data_fd = atoi(argv[1]);
-  gate = argv[2];
+  gate = argc >= 3 ? argv[2] : NULL;
   ethertap(dev, data_fd, 1, gate, NULL, 1, control_v4);
 }
