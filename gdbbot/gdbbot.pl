@@ -8,6 +8,8 @@ use strict;
 my $irc = new Net::IRC;
 my $pty = new IO::Pty;
 my $pid;
+my $key;
+my %trust = ();
 
 my $conn = $irc->newconn(Server   => 'irc.openprojects.net',
 			 Port     => 6667,
@@ -38,6 +40,7 @@ sub start_gdb {
     }
     else {
 	fcntl($pty, Fcntl::F_SETFL, Fcntl::O_NONBLOCK);
+	print "gdb pid is $pid\n";
 	return $pty;
     }
 }
@@ -45,9 +48,11 @@ sub start_gdb {
 sub on_connect {
     my $self = shift;
 
-    print "Joining \#umltest...\n";
-    $self->join("#umltest");
+    print "Joining \#umldebug...\n";
+    $self->join("#umldebug");
 
+    $key = rand(1<<31);
+    print "Your secret is $key\n";
     my $cmd = "gdb linux";
     my $pty = start_gdb($cmd);
     $irc->addfh($pty->fileno(), \&gdb_output, "rw");
@@ -64,14 +69,27 @@ sub on_public {
     if($arg =~ /\^C/){
 	kill 2, $pid;
     }
+    elsif(defined($key) && ($arg eq $key)){
+	$self->me("#umldebug", "trusts $nick");
+	$trust{$nick} = 1;
+    }
+    elsif($trust{$nick} == 1){
+	if($arg =~ /trust (.*)/){
+	    $trust{$1} = 1;
+	    $self->me("#umldebug", "trusts $1");
+	}
+	else {
+	    print $pty "$arg\n";
+	}
+    }
     else {
-	print $pty "$arg\n";
+	$self->me("#umldebug", "doesn't trust $nick");
     }
 }
 
 sub gdb_output {
     while(<$pty>){
-	$conn->privmsg("#umltest", "$_");
+	$conn->privmsg("#umldebug", "$_");
     }
 }
 
