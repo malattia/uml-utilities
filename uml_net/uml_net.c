@@ -192,7 +192,10 @@ static void ethertap(int argc, char **argv)
       if(n == 0) break;
       else if(n < 0) perror("read");
       n = send(fd, buf, n, 0);
-      if(n < 0) perror("send");
+      if((n < 0) && (errno != EAGAIN)){
+	perror("send");
+	break;
+      }
     }
     else if(FD_ISSET(fd, &fds)){
       n = recvfrom(fd, buf, sizeof(buf), 0, NULL, NULL);
@@ -214,8 +217,10 @@ static void slip_up(char **argv)
   char *remote_addr = argv[2];
   char slip_name[sizeof("slxxxx\0")];
   char *up_argv[] = { "ifconfig", slip_name, gate_addr, "pointopoint", 
-		      remote_addr, "up", NULL };
+		      remote_addr, "mtu", "1500", "up", NULL };
   char *arp_argv[] = { "arp", "-Ds", remote_addr, "eth0", "pub", NULL };
+  char *forw_argv[] = { "bash",  "-c", 
+			"echo 1 > /proc/sys/net/ipv4/ip_forward", NULL };
   int disc, sencap, n;
   
   disc = N_SLIP;
@@ -231,6 +236,7 @@ static void slip_up(char **argv)
   sprintf(slip_name, "sl%d", n);
   if(do_exec(up_argv, 1)) exit(1);
   do_exec(arp_argv, 1);
+  do_exec(forw_argv, 0);
 }
 
 static void slip_down(char **argv)
