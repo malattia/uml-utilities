@@ -395,7 +395,7 @@ int main(int argc, char **argv)
   int connect_fd, data_fd, n, i, new, one = 1;
   char *tap_dev = NULL;
 #ifdef TUNTAP
-  int tap_fd;
+  int tap_fd  = -1;
 #endif
 
   prog = argv[0];
