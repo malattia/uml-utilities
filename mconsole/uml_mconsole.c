@@ -79,18 +79,13 @@ struct mconsole_reply {
 
 static void default_cmd(int fd, char *command)
 {
-  struct iovec iov;
-  struct msghdr msg;
-  struct cmsghdr *cmsg;
-  struct ucred *credptr;
   struct mconsole_request request;
   struct mconsole_reply reply;
-  char anc[CMSG_SPACE(sizeof(*credptr))];
   char name[128];
   int n;
 
-  if((sscanf(command, "%128[^: \f\n\r\t\v]:", name) == 1) && 
-     (strchr(command, ':') != NULL)){
+  if((sscanf(command, "%128[^: \f\n\r\t\v]:", name) == 1) &&
+     (*(name + 1) == ':')){
     if(switch_common(name)) return;
     command = strchr(command, ':');
     *command++ = '\0';
@@ -102,47 +97,17 @@ static void default_cmd(int fd, char *command)
   request.len = MIN(strlen(command), sizeof(reply.data) - 1);
   strncpy(request.data, command, request.len);
   request.data[request.len] = '\0';
-  iov.iov_base = &request;
-  iov.iov_len = sizeof(request);
 
-  msg.msg_control = anc;
-  msg.msg_controllen = sizeof(anc);
-
-  cmsg = CMSG_FIRSTHDR(&msg);
-  cmsg->cmsg_level = SOL_SOCKET;
-  cmsg->cmsg_type = SCM_CREDENTIALS;
-  cmsg->cmsg_len = CMSG_LEN(sizeof(*credptr));
-  credptr = (struct ucred *) CMSG_DATA(cmsg);
-  credptr->pid = getpid();
-  credptr->uid = getuid();
-  credptr->gid = getgid();
-
-  msg.msg_name = &sun;
-  msg.msg_namelen = sizeof(sun);
-  msg.msg_iov = &iov;
-  msg.msg_iovlen = 1;
-  msg.msg_controllen = cmsg->cmsg_len;
-  msg.msg_flags = 0;
-
-  if(sendmsg(fd, &msg, 0) < 0){
+  if(sendto(fd, &request, sizeof(request), 0, (struct sockaddr *) &sun, 
+	    sizeof(sun)) < 0){
     fprintf(stderr, "Sending command to '%s' : ", sun.sun_path);
     perror("");
     return;
   }
-
-  iov.iov_base = &reply;
-  iov.iov_len = sizeof(reply);
-
-  msg.msg_name = NULL;
-  msg.msg_namelen = 0;
-  msg.msg_iov = &iov;
-  msg.msg_iovlen = 1;
-  msg.msg_control = NULL;
-  msg.msg_controllen = 0;
-  msg.msg_flags = 0;
-
+  
   do {
-    n = recvmsg(fd, &msg, 0);
+    int len = sizeof(sun);
+    n = recvfrom(fd, &reply, sizeof(reply), 0, (struct sockaddr *) &sun, &len);
     if(n < 0){
       perror("recvmsg");
       return;
@@ -151,6 +116,7 @@ static void default_cmd(int fd, char *command)
     else printf("OK ");
     printf("%s", reply.data);
   } while(reply.more);
+
   printf("\n");
 }
 
