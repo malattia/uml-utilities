@@ -4,7 +4,16 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 
-void do_exec(char **args, int need_zero)
+void fail(int fd)
+{
+  char c = 0;
+
+  if(write(fd, &c, sizeof(c)) != sizeof(c))
+    perror("Writing failure byte");
+  exit(1);
+}
+
+int do_exec(char **args, int need_zero)
 {
   int pid, status;
 
@@ -14,16 +23,17 @@ void do_exec(char **args, int need_zero)
   }
   else if(pid < 0){
     perror("fork failed");
-    exit(1);
+    return(-1);
   }
   if(waitpid(pid, &status, 0) < 0){
     perror("execvp");
-    exit(1);
+    return(-1);
   }
   if(need_zero && (!WIFEXITED(status) || (WEXITSTATUS(status) != 0))){
     printf("'%s' didn't exit with status 0\n", args[0]);
-    exit(1);
+    return(-1);
   }
+  return(0);
 }
 
 #define BUF_SIZE 1500
@@ -38,22 +48,32 @@ main(int argc, char **argv)
   char *ifconfig_argv[] = { "ifconfig", dev, "arp", gate_addr, "up", NULL };
   char *route_argv[] = { "route", "add", "-host", remote_addr, "gw", 
 			 gate_addr, NULL };
-  char dev_file[sizeof("/dev/tapxxxx\0")], zero;
+  char dev_file[sizeof("/dev/tapxxxx\0")], c;
   int tap, *fdptr;
 
   setreuid(0, 0);
-  do_exec(ifconfig_argv, 1);
-  do_exec(route_argv, 0);
 
   sprintf(dev_file, "/dev/%s", dev);
   if((tap = open(dev_file, O_RDWR | O_NONBLOCK)) < 0){
     perror("open");
-    exit(1);
+    fail(fd);
   }
-  
-  if(write(fd, &zero, sizeof(zero)) != sizeof(zero)){
+
+  if(do_exec(ifconfig_argv, 1)) fail(fd);
+  if(do_exec(route_argv, 0)) fail(fd);
+
+
+  /* arp -s 192.168.0.252 00:01:02:79:65:83 pub
+   * maybe arp -s 192.168.0.252 eth0 pub
+   * echo 1 > /proc/sys/net/ipv4/ip_forward 
+   * On host : route add -net 192.168.0.0 gw 192.168.0.4 netmask 255.255.255.0
+   */
+
+
+  c = 1;
+  if(write(fd, &c, sizeof(c)) != sizeof(c)){
     perror("write");
-    exit(1);
+    fail(fd);
   }
 
   while(1){
