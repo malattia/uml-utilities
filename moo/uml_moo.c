@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <time.h>
 #include <fcntl.h>
+#include <string.h>
 #include <byteswap.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -94,33 +95,25 @@ static void sizes(u64 size, int sectorsize, int bitmap_offset,
 	*data_offset_out *= sectorsize;
 }
 
-int create_backing_file(int argc, char *argv[])
+int create_backing_file(char *in, char *out)
 {
-	char *in = argv[1];
-	char *out = argv[2];
 	int cow_fd, back_fd, in_fd, out_fd;
-	struct stat64 buf;
+	struct stat buf;
 	unsigned long *bitmap;
 	int bitmap_len;
 	int blocks;
 	char * block;
-	int i;
-	u64 offset;
+	u64 size, offset, i; /* i is u64 to prevent 32 bit overflow */
         union cow_header header;
 	struct cow_header_common common;
 	int data_offset;
         unsigned long magic, version;
         char *backing_file;
         time_t mtime;
-        u64 size;
-        int sectorsize, bitmap_offset;
+        int sectorsize, bitmap_offset, perms;
 
 	if((cow_fd = open(in,  O_RDONLY)) < 0){
 		perror("COW file open");
-		exit(1);
-	}
-	if((out_fd = creat(out, 0644)) < 0){
-		perror("Output file open");
 		exit(1);
 	}
 
@@ -128,7 +121,7 @@ int create_backing_file(int argc, char *argv[])
 		perror("COW common header read");
 		exit(1);
 	}
-	if(lseek64(cow_fd, 0, SEEK_SET) != 0){
+	if(lseek(cow_fd, 0, SEEK_SET) != 0){
 		perror("seeking back to COW file start");
 		exit(1);
 	}
@@ -171,7 +164,7 @@ int create_backing_file(int argc, char *argv[])
                 exit(1);
         }
 
-	if(stat64(backing_file, &buf) < 0) {
+	if(stat(backing_file, &buf) < 0) {
 		perror("Stating backing file");
 		exit(1);
 	}
@@ -188,10 +181,20 @@ int create_backing_file(int argc, char *argv[])
 		exit(1);
 	}
 
-	if((back_fd = open(backing_file, O_RDONLY)) < 0){
+	perms = (out != NULL) ? O_RDONLY : O_RDWR;
+
+	if((back_fd = open(backing_file, perms)) < 0){
 		perror("Opening backing file");
 		exit(1);
 	}
+
+	if(out != NULL){
+		if((out_fd = creat(out, 0644)) < 0){
+			perror("Output file open");
+			exit(1);
+		}
+	}
+	else out_fd = back_fd;
 
 	sizes(size, sectorsize, bitmap_offset, &bitmap_len, &data_offset);
 		
@@ -201,7 +204,7 @@ int create_backing_file(int argc, char *argv[])
 		exit(1);
 	}
 
-	if(lseek64(cow_fd, bitmap_offset, SEEK_SET) < 0){
+	if(lseek(cow_fd, bitmap_offset, SEEK_SET) < 0){
 		perror("Seeking to COW bitmap");
 		exit(1);
 	}
@@ -220,12 +223,12 @@ int create_backing_file(int argc, char *argv[])
 	
 	for(i = 0; i < blocks; i++){
 		offset = i * sectorsize;
-		if(ubd_test_bit(i,bitmap)){
+		if(ubd_test_bit(i, bitmap)){
 			offset += data_offset;
 			in_fd = cow_fd;
 		}
 		else in_fd = back_fd;
-		if(lseek64(in_fd, offset, SEEK_SET) < 0){
+		if(lseek(in_fd, offset, SEEK_SET) < 0){
 			perror("Seeking into data");
 			exit(1);
 		}
@@ -234,6 +237,37 @@ int create_backing_file(int argc, char *argv[])
 			perror("Reading data");
 			exit(1);
 		}
+
+#ifdef notdef
+		/* Ifdef-ed out because this is wrong in the case of a COW
+		 * sector containing zeros with the corresponding backing 
+		 * sector containing non-zeros.  This will need to check the 
+		 * backing file sector before seeking past it.
+		 */
+
+		/* Sparse file creation - if the sector is all zeros, seek
+		 * past it instead of writing it out, unless it's the last 
+		 * sector.  The last sector needs to be written out in order
+		 * for the output file to have the proper size.
+		 */
+		if(i < blocks - 1){
+			for(j = 0; j < sectorsize ; j++){
+				if(block[j] != 0) break;
+			}
+			if(j == sectorsize){
+				if(lseek(out_fd, sectorsize, SEEK_CUR) < 0){
+					perror("Seeking past a zero sector");
+					exit(1);
+				}
+				continue;
+			}
+		}
+#endif
+
+		/* If we're doing a destructive merge, skip copying the
+		 * backing file's block over itself.
+		 */
+		if(in_fd == out_fd) continue;
 
 		if(write(out_fd, block, sectorsize) != sectorsize){
 			perror("Writing data");
@@ -248,19 +282,41 @@ int create_backing_file(int argc, char *argv[])
 	return 0;
 }
 
-int usage(char *prog) {
-	printf("%s usage:\n",prog);
-	printf("%s <COW file> <new backing file>\n", prog);
-	printf("creates a new filesystem image from the COW file and its.\n");
-	printf("backing file.\n");
-	printf("%s supports version 1 and 2 COW files.\n", prog);
+int Usage(char *prog) {
+	fprintf(stderr, "%s usage:\n",prog);
+	fprintf(stderr, "\t%s <COW file> <new backing file>\n", prog);
+	fprintf(stderr, "\t%s -d <COW file>\n", prog);
+	fprintf(stderr, "Creates a new filesystem image from the COW file "
+		"and its backing file.\n");
+	fprintf(stderr, "Specifying -d will cause a destructive, in-place "
+		"merge of the COW file into\n");
+	fprintf(stderr, "its current backing file\n");
+	fprintf(stderr, "%s supports version 1 and 2 COW files.\n", prog);
 	return 0;
 }
     
 int main(int argc, char **argv)
 {
-	if(argc == 3) create_backing_file(argc, argv);
-	else usage(argv[0]);
+	char *prog = argv[0];
+	int in_place = 0;
+
+	argv++;
+	argc--;
+
+	if(!strcmp(argv[0], "-d")){
+		in_place = 1;
+		argv++;
+		argc--;
+	}
+
+	if(in_place){
+		if(argc != 1) Usage(prog);
+		create_backing_file(argv[0], NULL);
+	}
+	else {
+		if(argc != 2) Usage(prog);
+		create_backing_file(argv[0], argv[1]);
+	}
 	return 0;
 }
 
