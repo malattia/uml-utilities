@@ -116,6 +116,13 @@ static int mk_node(char *devname)
   return(mknod(devname, S_IFCHR|S_IREAD|S_IWRITE, makedev(TAP_MAJOR,minor)));
 }
 
+/*
+ * Called from UML with the following parameters:
+ * uml_net ethertap tap_device file_descriptor gw_ip uml_ip
+ * for example:
+ * uml_net ethertap tap0 13 192.168.0.4 192.168.0.250
+ */
+
 #define BUF_SIZE 1500
 
 static void ethertap(int argc, char **argv)
@@ -124,14 +131,13 @@ static void ethertap(int argc, char **argv)
   int fd = atoi(argv[1]);
   char gate_addr[sizeof("255.255.255.255\0")];
   char remote_addr[sizeof("255.255.255.255\0")];
-  char ether_addr[sizeof("ff:ff:ff:ff:ff:ff\0")];
   int ip[4];
 
   char *ifconfig_argv[] = { "ifconfig", dev, "arp", "mtu", "1500", gate_addr,
-			    "up", NULL };
+			    "netmask", "255.255.255.255", "up", NULL };
   char *down_argv[] = { "ifconfig", dev, "0.0.0.0", "down", NULL };
-  char *route_argv[] = { "route", "add", "-host", remote_addr, "gw", 
-			 gate_addr, NULL };
+  char *route_argv[] = { "route", "add", "-host", remote_addr, "dev", 
+			 dev, NULL };
   char *arp_argv[] = { "arp", "-Ds", remote_addr, "eth0", "pub", NULL };
   char *no_arp_argv[] = { "arp", "-i", "eth0", "-d", remote_addr, "pub", 
 			  NULL };
@@ -141,13 +147,12 @@ static void ethertap(int argc, char **argv)
   int tap;
 
   signal(SIGHUP, SIG_IGN);
+  setreuid(0, 0);
   if(argc > 2){
     strncpy(gate_addr, argv[2], sizeof(gate_addr));
     strncpy(remote_addr, argv[3], sizeof(remote_addr));
-    setreuid(0, 0);
 
     sscanf(gate_addr, "%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
-    sprintf(ether_addr, "fd:fe:%x:%x:%x:%x", ip[0], ip[1], ip[2], ip[3]);
     if(maybe_insmod(dev)) fail(fd);
     if(do_exec(ifconfig_argv, 1)) fail(fd);
     if(do_exec(route_argv, 0)) fail(fd);
