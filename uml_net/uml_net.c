@@ -83,7 +83,8 @@ int main(int argc, char **argv)
   void (**handlers)(int, char **);
   struct sigaction sa;
   char *out;
-  int n = 3, v;
+  int n = 3;
+  unsigned int v;
 
   if(sigaction(SIGCHLD, NULL, &sa) < 0){
     perror("sigaction");
