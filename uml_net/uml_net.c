@@ -419,6 +419,7 @@ static void slip_v0_v2(int argc, char **argv)
   }
 }
 
+#ifdef TUNTAP
 static void tuntap_up(int argc, char **argv)
 {
   struct ifreq ifr;
@@ -520,6 +521,7 @@ static void tuntap_v2(int argc, char **argv)
     exit(1);
   }
 }
+#endif
 
 #define CURRENT_VERSION (2)
 
@@ -535,11 +537,13 @@ void (*slip_handlers[])(int argc, char **argv) = {
   slip_v0_v2, 
 };
 
+#ifdef TUNTAP
 void (*tuntap_handlers[])(int argc, char **argv) = {
   NULL,
   NULL,
   tuntap_v2
 };
+#endif
 
 int main(int argc, char **argv)
 {
@@ -565,7 +569,9 @@ int main(int argc, char **argv)
   }
   if(!strcmp(transport, "ethertap")) handlers = ethertap_handlers;
   else if(!strcmp(transport, "slip")) handlers = slip_handlers;
+#ifdef TUNTAP
   else if(!strcmp(transport, "tuntap")) handlers = tuntap_handlers;
+#endif
   else {
     printf("Unknown transport : '%s'\n", transport);
     exit(1);
