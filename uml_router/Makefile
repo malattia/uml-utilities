@@ -10,4 +10,4 @@ clean :
 	rm -f uml_router $(OBJS) *~
 
 install :
-	install uml_router /usr/bin
+	install uml_router $(DESTDIR)/usr/bin
