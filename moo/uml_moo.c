@@ -10,7 +10,6 @@
 #include <time.h>
 #include <fcntl.h>
 #include <byteswap.h>
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/param.h>
@@ -121,7 +120,7 @@ int create_backing_file(int argc, char *argv[])
 		exit(1);
 	}
 	if((out_fd = creat(out, 0644)) < 0){
-		perror("COW file open");
+		perror("Output file open");
 		exit(1);
 	}
 
@@ -129,7 +128,7 @@ int create_backing_file(int argc, char *argv[])
 		perror("COW common header read");
 		exit(1);
 	}
-	if(lseek(cow_fd, 0, SEEK_SET) != 0){
+	if(lseek64(cow_fd, 0, SEEK_SET) != 0){
 		perror("seeking back to COW file start");
 		exit(1);
 	}
@@ -226,7 +225,7 @@ int create_backing_file(int argc, char *argv[])
 			in_fd = cow_fd;
 		}
 		else in_fd = back_fd;
-		if(lseek(in_fd, offset, SEEK_SET) < 0){
+		if(lseek64(in_fd, offset, SEEK_SET) < 0){
 			perror("Seeking into data");
 			exit(1);
 		}
