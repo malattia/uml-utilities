@@ -3,11 +3,24 @@
 #include <stddef.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <sys/socket.h>
 #include <sys/signal.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
+#include <net/if.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <ctype.h>
+
+/* Shouldn't there be some other way to figure out the major and minor
+ * number of the tap device other than hard-wiring it here? Does FreeBSD
+ * have a 'tap' device? Should we have some kind of #ifdef here?
+ */
+#define TAP_MAJOR 36
+#define TAP_MINOR 16  /* plus whatever tap device it was. */
 
 void fail(int fd)
 {
@@ -43,6 +56,66 @@ int do_exec(char **args, int need_zero)
   return(0);
 }
 
+static int maybe_insmod(char *dev)
+{
+  struct ifreq ifr;
+  int fd, unit;
+  char unit_buf[sizeof("unit=nnn\0")];
+  char ethertap_buf[sizeof("ethertapnnn\0")];
+  char *insmod_argv[] = { "insmod", "ethertap", unit_buf, "-o", ethertap_buf,
+			  NULL };
+  
+  if((fd = socket(PF_INET, SOCK_DGRAM, 0)) < 0){
+    perror("socket");
+    return(-1);
+  }
+  strcpy(ifr.ifr_name, dev);
+  if(ioctl(fd, SIOCGIFFLAGS, &ifr) == 0) return(0);
+  if(errno != ENODEV){
+    perror("SIOCGIFFLAGS on tap device");
+    return(-1);
+  }
+  if(sscanf(dev, "tap%d", &unit) != 1){
+    fprintf(stderr, "failed to get unit number from '%s'\n", dev);
+    return(-1);
+  }
+  sprintf(unit_buf, "unit=%d", unit);
+  sprintf(ethertap_buf, "ethertap%d", unit);
+  return(do_exec(insmod_argv, 0));
+}
+
+/* This is a routine to do a 'mknod' on the /dev/tap<n> if possible:
+ * Return: 0 is ok, -1=already open, etc.
+  */
+static int mk_node(char *devname)
+{
+  struct stat statval;
+  int retval;
+  int minor; /* the minor number for the tap device. */
+
+  /* first do a stat on the node to see whether it exists and we
+   * had some other reason to fail:
+   */
+  retval=stat(devname,&statval);
+  if(!retval || (errno != ENOENT)){
+    /* it does exist. We are just going to return -1, 'cause there
+     * was some other problem in the open :-(.
+     */
+    return -1;
+  }
+  /* It doesn't exist. We can create it. */
+
+  if(sscanf(devname, "/dev/tap%d", &minor) != 1){
+    fprintf(stderr, "failed to get unit number from '%s'\n", devname);
+    return(-1);
+  }
+  minor += TAP_MINOR;
+
+  /* Now to do a mknod on it: */
+
+  return(mknod(devname, S_IFCHR|S_IREAD|S_IWRITE, makedev(TAP_MAJOR,minor)));
+}
+
 #define BUF_SIZE 1500
 
 static void ethertap(int argc, char **argv)
@@ -75,6 +148,7 @@ static void ethertap(int argc, char **argv)
 
     sscanf(gate_addr, "%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
     sprintf(ether_addr, "fd:fe:%x:%x:%x:%x", ip[0], ip[1], ip[2], ip[3]);
+    if(maybe_insmod(dev)) fail(fd);
     if(do_exec(ifconfig_argv, 1)) fail(fd);
     if(do_exec(route_argv, 0)) fail(fd);
     do_exec(arp_argv, 0);
@@ -85,6 +159,9 @@ static void ethertap(int argc, char **argv)
      */
   }
   sprintf(dev_file, "/dev/%s", dev);
+
+  mk_node(dev_file); /* do a mknod on it if it doesn't exist. */
+
   if((tap = open(dev_file, O_RDWR | O_NONBLOCK)) < 0){
     perror("open");
     fail(fd);
