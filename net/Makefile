@@ -19,4 +19,4 @@ dist:
 	cd .. ; tar --exclude=CVS -zcf um_eth_net-0.005.tar.gz net/
 
 clean:
-	rm -rf um_eth_net_util um_eth_net_set *.o core
+	rm -rf um_eth_net_util um_eth_net_set *.o core *~
