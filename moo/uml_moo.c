@@ -3,6 +3,8 @@
  * Licensed under the GPL
  */ 
 
+#define _XOPEN_SOURCE 500
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -101,9 +103,9 @@ int create_backing_file(char *in, char *out)
 	struct stat buf;
 	unsigned long *bitmap;
 	int bitmap_len;
-	int blocks;
-	char * block;
-	u64 size, offset, i; /* i is u64 to prevent 32 bit overflow */
+	int sectors;
+	void *sector, *zeros;
+	u64 size, offset, n, i; /* i is u64 to prevent 32 bit overflow */
         union cow_header header;
 	struct cow_header_common common;
 	int data_offset;
@@ -204,86 +206,65 @@ int create_backing_file(char *in, char *out)
 		exit(1);
 	}
 
-	if(lseek(cow_fd, bitmap_offset, SEEK_SET) < 0){
-		perror("Seeking to COW bitmap");
-		exit(1);
-	}
-
-	if(read(cow_fd, bitmap, bitmap_len) != bitmap_len){
+	if(pread(cow_fd, bitmap, bitmap_len, bitmap_offset) != bitmap_len){
 		perror("Reading COW bitmap");
 		exit(1);
 	}
 
-	blocks = bitmap_len * 8;
-	block = (char *) malloc(sectorsize);
-	if(block == NULL){
-		perror("Malloc of buffer");
+	sectors = bitmap_len * 8;
+	sector = malloc(sectorsize);
+	zeros = malloc(sectorsize);
+	if((sector == NULL) || (zeros == NULL)){
+		perror("Malloc of buffers");
 		exit(1);
 	}
-	
-	for(i = 0; i < blocks; i++){
+
+	memset(zeros, 0, sectorsize);
+
+	for(i = 0; i < sectors; i++){
 		offset = i * sectorsize;
 		if(ubd_test_bit(i, bitmap)){
 			offset += data_offset;
 			in_fd = cow_fd;
 		}
 		else in_fd = back_fd;
-		if(lseek(in_fd, offset, SEEK_SET) < 0){
-			perror("Seeking into data");
-			exit(1);
-		}
 
-		if(read(in_fd, block, sectorsize) != sectorsize){
+		/* If we're doing a destructive merge, and the backing file
+		 * sector is up to date, then there's nothing to do.
+		 */
+		if((out_fd == back_fd) && (in_fd == back_fd))
+			continue;
+
+		if(pread(in_fd, sector, sectorsize, offset) != sectorsize){
 			perror("Reading data");
 			exit(1);
 		}
 
-#ifdef notdef
-		/* Ifdef-ed out because this is wrong in the case of a COW
-		 * sector containing zeros with the corresponding backing 
-		 * sector containing non-zeros.  This will need to check the 
-		 * backing file sector before seeking past it.
+		/* Sparse file creation - if the sector is all zeros, then
+		 * we don't need to write it out.  Unless it's the last
+		 * sector, in which case it needs to be written in order to
+		 * make the file size right.
 		 */
+		if((i < sectors - 1) && !memcmp(sector, zeros, sectorsize))
+			continue;
 
-		/* Sparse file creation - if the sector is all zeros, seek
-		 * past it instead of writing it out, unless it's the last 
-		 * sector.  The last sector needs to be written out in order
-		 * for the output file to have the proper size.
-		 */
-		if(i < blocks - 1){
-			for(j = 0; j < sectorsize ; j++){
-				if(block[j] != 0) break;
-			}
-			if(j == sectorsize){
-				if(lseek(out_fd, sectorsize, SEEK_CUR) < 0){
-					perror("Seeking past a zero sector");
-					exit(1);
-				}
-				continue;
-			}
-		}
-#endif
-
-		/* If we're doing a destructive merge, skip copying the
-		 * backing file's block over itself.
-		 */
-		if(in_fd == out_fd) continue;
-
-		if(write(out_fd, block, sectorsize) != sectorsize){
+		n = pwrite(out_fd, sector, sectorsize, i * sectorsize);
+		if(n != sectorsize){
 			perror("Writing data");
 			exit(1);
 		}
 	}
 	free(bitmap);
-	free(block);
+	free(sector);
+	free(zeros);
 	close(cow_fd);
 	close(out_fd);
 	close(back_fd);
-	return 0;
+	return(0);
 }
 
 int Usage(char *prog) {
-	fprintf(stderr, "%s usage:\n",prog);
+	fprintf(stderr, "%s usage:\n", prog);
 	fprintf(stderr, "\t%s <COW file> <new backing file>\n", prog);
 	fprintf(stderr, "\t%s -d <COW file>\n", prog);
 	fprintf(stderr, "Creates a new filesystem image from the COW file "
@@ -292,7 +273,7 @@ int Usage(char *prog) {
 		"merge of the COW file into\n");
 	fprintf(stderr, "its current backing file\n");
 	fprintf(stderr, "%s supports version 1 and 2 COW files.\n", prog);
-	return 0;
+	exit(1);
 }
     
 int main(int argc, char **argv)
@@ -302,6 +283,9 @@ int main(int argc, char **argv)
 
 	argv++;
 	argc--;
+
+	if(argc == 0)
+		Usage(prog);
 
 	if(!strcmp(argv[0], "-d")){
 		in_place = 1;
