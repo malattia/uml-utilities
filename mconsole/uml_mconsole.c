@@ -18,37 +18,43 @@
 static char uml_name[11];
 static struct sockaddr_un sun;
 
-static int do_switch(char *name)
+static int do_switch(char *file, char *name)
 {
   struct stat buf;
 
-  if(stat(name, &buf) == -1){
-    fprintf(stderr, "Couldn't stat file: %s - ", name);
+  if(stat(file, &buf) == -1){
+    fprintf(stderr, "Warning: couldn't stat file: %s - ", file);
     perror("");
     return(-1);
   }
   sun.sun_family = AF_UNIX;
-  strcpy(sun.sun_path, name);
-  if(sscanf(name, "/tmp/uml/%10[^/]/mconsole", uml_name) < 1){
-    printf("Couldn't determine UML name from '%s'\n", name);
-    strcpy(uml_name, "[Unknown]");
-  }
+  strncpy(sun.sun_path, file, sizeof(sun.sun_path));
+  strncpy(uml_name, name, sizeof(uml_name));
   return(0);
 }
 
 static int switch_common(char *name)
 {
-  char file[MAXPATHLEN];
+  char file[MAXPATHLEN + 1], dir[MAXPATHLEN + 1], tmp[MAXPATHLEN + 1], *home;
   int try_file = 1;
 
-  sprintf(file, "/tmp/uml/%s/mconsole", name);
-  if(strncmp(name, "/tmp/uml/", strlen("/tmp/uml/"))){
-    if(!do_switch(file)) return(0);
-    try_file = 0;
+  if((home = getenv("HOME")) != NULL){
+    snprintf(dir, sizeof(dir), "%s/.uml", home);
+    snprintf(file, sizeof(file), "%s/%s/mconsole", dir, name);
+    if(strncmp(name, dir, strlen(dir))){
+      if(!do_switch(file, name)) return(0);
+      try_file = 0;
+    }
   }
-  if(!do_switch(name)) return(0);
+
+  snprintf(tmp, sizeof(tmp), "/tmp/uml/%s/mconsole", name);
+  if(strncmp(name, "/tmp/uml/", strlen("/tmp/uml/"))){
+    if(!do_switch(tmp, name)) return(0);
+  }
+
+  if(!do_switch(name, name)) return(0);
   if(!try_file) return(-1);
-  return(do_switch(file));
+  return(do_switch(file, name));
 }
 
 #define MCONSOLE_MAGIC (0xcafebabe)
