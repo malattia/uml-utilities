@@ -1,0 +1,252 @@
+#!/bin/bash
+
+function rpm_file()
+{
+    local name=$1
+    set $RPMDIR/$1[-0-9.i]*.rpm
+    if [ $# -ne 1 ]
+    then
+	echo
+	echo Found too many rpms for \"$name\" 1>&2
+	exit 1
+    elif [ ! -f $1 ]
+    then
+	echo
+	echo Found no rpms for \"$name\" 1>&2
+	exit 1
+    fi
+    echo $1
+}
+
+function get_data()
+{
+    local prompt=$1
+    local default=$2
+    local verify=$3
+    local answer=""
+    local err_msg
+
+    while true; do
+        echo -n "$prompt [$default]: " 1>&2
+        read answer
+        [ "$answer" = "" ] && answer=$default
+	[ $verify != "" ] && err_msg=`$verify $answer` && break
+	[ "$err_msg" != "" ] && echo -e $err_msg 1>&2
+    done
+    echo $answer
+}
+
+function verify_yn()
+{
+    local answer=$1
+    local res=true
+
+    echo "Please answer 'y' or 'n'"
+    [ "$1" = "y" ] || [ "$1" = "n" ]
+}
+
+function verify_fs()
+{
+    local file=$1;
+    local res=true
+    local ok="y"
+
+    if [ -b "$file" ]
+    then
+	ok=`get_data "\"$file\" is a block device - confirm that you want to install into it" y verify_yn`
+    elif [ -d "$file" ]
+    then
+	ok=`get_data "\"$file\" is a directory - confirm that you want to install into it" y verify_yn`
+    elif [ -f "$file" ]
+    then
+	ok=`get_data "\"$file\" already exists - OK to delete it" y verify_yn`
+    elif [ -e $file ]
+    then
+	ok=`get_data "\"$file\" is not a plain file - OK to delete it" y \
+	    verify_yn`
+    fi
+    [ "$ok" = "y" ]
+}
+
+function verify_size()
+{
+    local size=$1
+    local err=""
+    local space=`df \`dirname $FSFILE\` | tail -1 | awk '{print $4}'`
+    space=$(( $space / 1024 ))
+    local mnt=`df \`dirname $FSFILE\` | tail -1 | awk '{print $6}'`
+
+    if [ `expr "$size" : '[0-9]*'` -ne `expr length "$size"` ]
+    then
+	err="The size must be a number, containing only digits"
+    elif [ "$size" -lt 100 ]
+    then
+	err="The size should be at least 100"
+    elif [ $space -lt "$size" ]
+    then
+	err="There is not enough free space in $mnt (available space : \
+$space M)"
+    fi
+    echo $err
+    [ "$err" = "" ]
+}
+
+function verify_mnt()
+{
+    local dir=$1
+    local err=""
+
+    if [ ! -d "$dir" ]
+    then
+	err="$dir is not a directory"
+    elif [ ! -d "$dir/RedHat/RPMS" ]
+    then
+	err="$dir seems not to be a Red Hat distribution ($dir/RedHat/RPMS \n\
+doesn't exist or isn't a directory)"
+    fi
+    echo $err
+    [ "$err" = "" ]
+}
+
+function verify_sudo()
+{
+    local sudo=$1
+    local err=""
+
+    if [ "$sudo" = "" ]
+    then err=""
+    elif [ ! -f "$sudo" ] || [ ! -x "$sudo" ] || [ ! -u "$sudo" ]
+    then
+	err="\"$sudo\" is not an setuid root executable file"
+    fi
+    echo $err
+    [ "$err" = "" ]
+}
+
+FSFILE=root_fs
+FSMEGS=100
+CDDIR=/mnt/cdrom
+
+if [ `whoami` = root ]
+then
+    SUDO=""
+else 
+    SUDO=`which sudo`
+    [ $? -ne 0 ] && echo \
+You need to have sudo installed or you need to run this script as root && \
+    SUDO=`get_data "Your local copy of sudo (hit return to exit)" "" \
+	verify_sudo`
+    [ "$SUDO" = "" ] && exit 1
+fi
+
+while true; do
+
+FSFILE=`get_data "File that the new filesystem should be built in" \
+    $FSFILE verify_fs`
+
+[ ! -d $FSFILE ] && [ ! -b $FSFILE ] &&
+    FSMEGS=`get_data "Size of the filesystem in megabytes" $FSMEGS verify_size`
+
+CDDIR=`get_data "Mount point of your RH distribution" $CDDIR verify_mnt`
+
+echo
+echo The root filesystem will be built in \"$FSFILE\"
+[ ! -d $FSFILE ] && [ ! -b $FSFILE ] &&
+    echo It will be "$FSMEGS"M in size
+echo Your Red Hat distribution is mounted at \"$CDDIR\"
+echo
+OK=`get_data "Is this information correct" y verify_yn`
+[ $OK = 'y' ] && break;
+
+done
+
+RPMDIR=$CDDIR/RedHat/RPMS
+
+# These are to get bash off the ground.  You probably shouldn't change them.
+BASH_RPMS="filesystem- ldconfig- glibc- libtermcap- bash- util-linux- "
+
+# These are all the others.  Add new rpms to this list if you want more stuff
+# in your filesystem.
+REST="bdflush- fileutils- grep- mingetty- mktemp- gawk- diffutils- textutils- \
+    mount- net-tools- shadow-utils- chkconfig- procps- sed- vixie-cron- \
+    modutils- e2fsprogs- popt- logrotate- sysklogd- console-tools- which- \
+    psmisc- initscripts- quota- slang- pwdb- cracklib- cracklib-dicts- \
+    compat-glibc- glib- pam- sh-utils- netkit-base- passwd-\
+    SysVinit- tcp_wrappers- tcsh- gdbm- perl-5.00503- telnet- readline- \
+    readline-devel- ftp- wu-ftpd- indexhtml- zlib- lynx- findutils- dev-"
+
+if [ -d $FSFILE ]
+then
+    MNTDIR=$FSFILE
+else
+    MNTDIR=mnt
+    if [ ! -b $FSFILE ]
+    then
+        rm -rf $FSFILE
+	echo Creating \"$FSFILE\" as an empty file...
+	dd if=/dev/zero of=$FSFILE bs=$((1024 * 1024)) count=$FSMEGS || exit 1
+    fi
+
+    [ "$SUDO" != "" ] && \
+    echo Privileged operation - you may need to type your root passwork at sudo
+
+    echo Making a file system in it...
+    $SUDO mke2fs -F $FSFILE || exit 1
+
+    echo Mounting it on $MNTDIR
+    [ ! -d $MNTDIR ] && mkdir $MNTDIR
+    [ ! -b $FSFILE ] && LOOP="-o loop"
+    $SUDO mount $LOOP $FSFILE $MNTDIR || exit 1
+fi
+
+cd $MNTDIR
+
+$SUDO mkdir -p var/lib/rpm/ || exit 1
+$SUDO mkdir -p var/tmp/ || exit 1
+
+echo Forcibly installing the initial set of rpms...
+
+for rpm in $BASH_RPMS
+do
+    rpm_file=`rpm_file $rpm`
+    $SUDO rpm -i --nodeps --root `pwd` $rpm_file
+done
+
+rpms=""
+
+for rpm in setup- info- ncurses-
+do
+    rpm_file=`rpm_file $rpm`
+    rpms="$rpms $rpm_file"
+done
+
+$SUDO rpm -i --nodeps --root `pwd` $rpms
+
+echo done
+
+echo Installing everything else...
+
+rpms=""
+for rpm in $REST
+do
+    file=`rpm_file $rpm`
+    rpms="$rpms $file"
+done
+
+$SUDO rpm -i --root `pwd` $rpms
+
+echo done
+
+echo Copying /bin/true over /sbin/hwclock
+$SUDO cp bin/true sbin/hwclock
+$SUDO rm etc/pam.d/*
+
+echo Installing the init files
+
+$SUDO tar xpf ../initfiles.tar || exit 1
+
+cd ..
+
+[ ! -d $FSFILE ] && $SUDO umount $MNTDIR || exit 1
+
+echo All set
