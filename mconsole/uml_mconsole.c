@@ -96,5 +96,6 @@ int main(int argc, char **argv)
     buf[n] = '\0';
     printf("%s\n", buf);
   }
+  printf("\n");
   return(0);
 }
