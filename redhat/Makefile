@@ -1,9 +1,12 @@
+BIN_DIR = /usr/bin
+LIB_DIR = /usr/lib/uml
+
 all : 
 
 install :
-	install -d $(DESTDIR)/usr/bin
-	install mkrootfs $(DESTDIR)/usr/bin
-	install -d $(DESTDIR)/usr/lib/uml
-	install functions $(DESTDIR)/usr/lib/uml
+	install -d $(DESTDIR)$(BIN_DIR)
+	install mkrootfs $(DESTDIR)$(BIN_DIR)
+	install -d $(DESTDIR)$(LIB_DIR)
+	install functions $(DESTDIR)$(LIB_DIR)
 
 clean :

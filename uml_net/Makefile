@@ -3,6 +3,9 @@ TUNTAP = $(shell [ -e /usr/include/linux/if_tun.h ] && echo -DTUNTAP)
 BIN = uml_net
 CFLAGS = -g -Wall $(TUNTAP)
 
+BIN_DIR = /usr/bin
+LIB_DIR = /usr/lib/uml
+
 OBJS = ethertap.o host.o output.o slip.o uml_net.o
 
 ifneq ($(TUNTAP),)
@@ -18,5 +21,5 @@ clean :
 	rm -f $(BIN) $(OBJS) *~
 
 install : $(BIN)
-	install -d $(DESTDIR)/usr/bin
-	install -s -m 04755 $(BIN) $(DESTDIR)/usr/bin
+	install -d $(DESTDIR)$(BIN_DIR)
+	install -s -m 04755 $(BIN) $(DESTDIR)$(BIN_DIR)

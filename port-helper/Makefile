@@ -2,6 +2,9 @@ OBJS = port-helper.o
 BIN = port-helper
 CFLAGS = -g -Wall
 
+BIN_DIR = /usr/bin
+LIB_DIR = /usr/lib/uml
+
 all : $(BIN)
 
 $(BIN) : $(OBJS)
@@ -11,5 +14,5 @@ clean :
 	rm -f $(BIN) $(OBJS) *~
 
 install : $(BIN)
-	install -d $(DESTDIR)/usr/lib/uml
-	install -s $(BIN) $(DESTDIR)/usr/lib/uml
+	install -d $(DESTDIR)$(LIB_DIR)
+	install -s $(BIN) $(DESTDIR)$(LIB_DIR)
