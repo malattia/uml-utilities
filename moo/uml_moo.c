@@ -38,7 +38,7 @@ static inline void ubd_set_bit(int bit, unsigned long *data)
 	data[n] |= (1 << off);
 }
 
-int create_backing_file(char *in, char *out)
+int create_backing_file(char *in, char *out, char *actual_backing)
 {
 	int cow_fd, back_fd, in_fd, out_fd;
 	struct stat buf;
@@ -65,10 +65,14 @@ int create_backing_file(char *in, char *out)
 		exit(1);
 	}
 
+	if(actual_backing != NULL)
+		backing_file = actual_backing;
+
 	if(stat(backing_file, &buf) < 0) {
 		perror("Stating backing file");
 		exit(1);
 	}
+
 	if(buf.st_size != size){
 		fprintf(stderr,"Size mismatch (%ld vs %ld) of COW header "
 			"vs backing file \"%s\"\n", (long int) size, 
@@ -190,22 +194,27 @@ int create_backing_file(char *in, char *out)
 	return(0);
 }
 
-int Usage(char *prog) {
-	fprintf(stderr, "%s usage:\n", prog);
-	fprintf(stderr, "\t%s <COW file> <new backing file>\n", prog);
-	fprintf(stderr, "\t%s -d <COW file>\n", prog);
-	fprintf(stderr, "Creates a new filesystem image from the COW file "
-		"and its backing file.\n");
-	fprintf(stderr, "Specifying -d will cause a destructive, in-place "
-		"merge of the COW file into\n");
-	fprintf(stderr, "its current backing file\n");
-	fprintf(stderr, "%s supports version 1 and 2 COW files.\n", prog);
+static char *usage_string = 
+"%s usage:\n"
+"\t%s [ -b <actual backing file> ] <COW file> <new backing file>\n"
+"\t%s [ -b <actual backing file> ] -d <COW file>\n"
+"Creates a new filesystem image from the COW file and its backing file.\n"
+"Specifying -d will cause a destructive, in-place merge of the COW file into\n"
+"its current backing file\n"
+"Specifying -b overrides the backing_file specified in the COW file.  This is\n"
+"needed when dealing with a COW file that was created inside a chroot jail.\n"
+"%s supports version 1 and 2 COW files.\n"
+"";
+
+static int Usage(char *prog) {
+	fprintf(stderr, usage_string, prog, prog, prog, prog);
 	exit(1);
 }
     
 int main(int argc, char **argv)
 {
 	char *prog = argv[0];
+	char *actual_backing_file = NULL;
 	int in_place = 0;
 
 	argv++;
@@ -220,13 +229,19 @@ int main(int argc, char **argv)
 		argc--;
 	}
 
+	if(!strcmp(argv[0], "-b")){
+		actual_backing_file = argv[1];
+		argv += 2;
+		argc -= 2;
+	}
+
 	if(in_place){
 		if(argc != 1) Usage(prog);
-		create_backing_file(argv[0], NULL);
+		create_backing_file(argv[0], NULL, actual_backing_file);
 	}
 	else {
 		if(argc != 2) Usage(prog);
-		create_backing_file(argv[0], argv[1]);
+		create_backing_file(argv[0], argv[1], actual_backing_file);
 	}
 	return 0;
 }
