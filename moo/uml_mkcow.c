@@ -2,9 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/user.h>
 
 #include "cow.h"
 
@@ -57,7 +57,7 @@ int main(int argc, char *argv[])
 	exit(1);
   }
   
-  if(init_cow_file(fd, cow_file, backing_file, 512, PAGE_SIZE, 
+  if(init_cow_file(fd, cow_file, backing_file, 512, sysconf(_SC_PAGESIZE), 
 		   &bitmap_offset_out, &bitmap_len_out, &data_offset_out)){
 	perror("write_cow_header");
 	exit(1);
