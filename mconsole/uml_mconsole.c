@@ -51,14 +51,36 @@ static int switch_common(char *name)
   return(do_switch(file));
 }
 
+#define MCONSOLE_MAGIC (0xcafebabe)
+#define MCONSOLE_MAX_DATA (512)
+#define MCONSOLE_VERSION (1)
+
+#define MIN(a,b) ((a)<(b) ? (a):(b))
+
+struct mconsole_request {
+	unsigned long magic;
+	int version;
+	int len;
+	char data[MCONSOLE_MAX_DATA];
+};
+
+struct mconsole_reply {
+	int err;
+	int more;
+	int len;
+	char data[MCONSOLE_MAX_DATA];
+};
+
 static void default_cmd(int fd, char *command)
 {
   struct iovec iov;
   struct msghdr msg;
   struct cmsghdr *cmsg;
   struct ucred *credptr;
+  struct mconsole_request request;
+  struct mconsole_reply reply;
   char anc[CMSG_SPACE(sizeof(*credptr))];
-  char buf[256], name[128];
+  char name[128];
   int n;
 
   if((sscanf(command, "%128[^: \f\n\r\t\v]:", name) == 1) && 
@@ -69,8 +91,13 @@ static void default_cmd(int fd, char *command)
     while(isspace(*command)) command++;
   }
 
-  iov.iov_base = command;
-  iov.iov_len = strlen(command);
+  request.magic = MCONSOLE_MAGIC;
+  request.version = MCONSOLE_VERSION;
+  request.len = MIN(strlen(command), sizeof(reply.data) - 1);
+  strncpy(request.data, command, request.len);
+  request.data[request.len] = '\0';
+  iov.iov_base = &request;
+  iov.iov_len = sizeof(request);
 
   msg.msg_control = anc;
   msg.msg_controllen = sizeof(anc);
@@ -97,8 +124,8 @@ static void default_cmd(int fd, char *command)
     return;
   }
 
-  iov.iov_base = buf;
-  iov.iov_len = sizeof(buf);
+  iov.iov_base = &reply;
+  iov.iov_len = sizeof(reply);
 
   msg.msg_name = NULL;
   msg.msg_namelen = 0;
@@ -108,13 +135,17 @@ static void default_cmd(int fd, char *command)
   msg.msg_controllen = 0;
   msg.msg_flags = 0;
 
-  n = recvmsg(fd, &msg, 0);
-  if(n < 0){
-    perror("recvmsg");
-    return;
-  }
-  buf[n] = '\0';
-  printf("%s\n", buf);
+  do {
+    n = recvmsg(fd, &msg, 0);
+    if(n < 0){
+      perror("recvmsg");
+      return;
+    }
+    if(reply.err) printf("ERR ");
+    else printf("OK ");
+    printf("%s", reply.data);
+  } while(reply.more);
+  printf("\n");
 }
 
 static void help_cmd(int fd, char *command)
