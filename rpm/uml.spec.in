@@ -1,0 +1,94 @@
+Name:				user_mode_linux
+Summary:			The user-mode port of the Linux kernel
+Version:			%{version}
+Release:			0
+Copyright:			GPL
+Packager:			Jeff Dike <jdike@karaya.com>
+Group:				Utilities/System
+Source:				http://download.sourceforge.net/user-mode-linux/uml-patch-%{version}
+Vendor:				Jeff Dike <jdike@karaya.com>
+URL:				http://user-mode-linux.sourceforge.net/
+
+%description
+This is the user-mode port of the Linux kernel - it runs a virtual 
+machine in a set of Linux processes.  This package also contains a 
+number of other useful tools and utilities related to UML.
+
+%changelog
+* Thu Aug 16 2001 Jeff Dike <jdike@karaya.com>
+- Kernel -
+- Updated to 2.4.9
+- Some signal handling fixes
+- Started protecting kernel memory from malicious processes
+- Userspace -
+- None
+
+* Sun Aug 12 2001 Jeff Dike <jdike@karaya.com>
+- Kernel -
+- Updated to 2.4.8
+- Fixed the TASK_UNINTERRUPTIBLE deadlock again
+- hostfs writes go through the page cache
+- Finished merging the ppc port
+- Fixed a crash if an interface tries to get an ether address without 
+- having an IP address
+- Fixed an old bug which only showed up now which caused 2.4.7 not to boot
+- Fixed hostfs ls on 2.4 hosts
+- Fixed gprof support
+- Added text to Configure.help
+- The pid file now always contains the right pid
+- hostfs again should compile and run on 2.2
+- ethertap eth devices can have their addresses changed on the fly 
+- Userspace -
+- uml_net now changes the host configuration to follow IP address changes
+- inside UML
+
+* Wed Jul  4 2001 Jeff Dike <jdike@karaya.com>
+- Merged the management console
+- Many bug fixes
+- 64 bit IO works again
+
+* Wed Mar  7 2001 Jeff Dike <jdike@karaya.com>
+- Redid the network drivers
+
+* Wed Mar  7 2001 Jeff Dike <jdike@karaya.com>
+- initial version
+
+
+%prep
+
+rm -rf uml
+mkdir uml
+cd uml
+cp $ZTARBALL .
+compressed=`echo user_mode_linux*`
+gunzip $compressed
+archive=`echo $compressed | sed 's/.gz$//'`
+tar xf $archive .
+
+%build
+
+cd uml
+make all
+
+%install
+
+rm -rf $UML_BUILD_DIR
+mkdir $UML_BUILD_DIR
+cd uml
+make install DESTDIR=$UML_BUILD_DIR
+						
+%clean
+rm -rf uml
+
+%files
+%defattr(-,root,root)
+%attr(755,root,root)				/usr/bin/linux
+%attr(644,root,root)                            /usr/lib/uml/modules-2.2.tar
+%attr(644,root,root)                            /usr/lib/uml/modules-2.4.tar
+%attr(755,root,root)				/usr/bin/mkrootfs
+%attr(755,root,root)				/usr/lib/uml/functions
+%attr(4755,root,root)				/usr/bin/uml_net
+%attr(755,root,root)				/usr/bin/uml_router
+%attr(755,root,root)				/usr/bin/uml_moo
+%attr(755,root,root)				/usr/bin/uml_mconsole
+#%attr(644,root,root)                            /usr/doc/HOWTO/UserModeLinux-HOWTO
