@@ -59,7 +59,7 @@ static int switch_common(char *name)
 
 #define MCONSOLE_MAGIC (0xcafebabe)
 #define MCONSOLE_MAX_DATA (512)
-#define MCONSOLE_VERSION (1)
+#define MCONSOLE_VERSION (2)
 
 #define MIN(a,b) ((a)<(b) ? (a):(b))
 
@@ -77,12 +77,118 @@ struct mconsole_reply {
 	char data[MCONSOLE_MAX_DATA];
 };
 
+static char *absolutize(char *to, int size, char *from)
+{
+  char save_cwd[MAXPATHLEN + 1], *slash;
+  int remaining;
+
+  if(getcwd(save_cwd, sizeof(save_cwd)) == NULL) {
+    perror("absolutize : unable to get cwd");
+    return(NULL);
+  }
+  slash = strrchr(from, '/');
+  if(slash != NULL){
+    *slash = '\0';
+    if(chdir(from)){
+      *slash = '/';
+      fprintf(stderr, "absolutize : Can't cd to '%s'", from);
+      perror("");
+      return(NULL);
+    }
+    *slash = '/';
+    if(getcwd(to, size) == NULL){
+      fprintf(stderr, "absolutize : unable to get cwd of '%s'", from);
+      perror("");
+      return(NULL);
+    }
+    remaining = size - strlen(to);
+    if(strlen(slash) + 1 > remaining){
+      fprintf(stderr, "absolutize : unable to fit '%s' into %d chars\n", from,
+	      size);
+      return(NULL);
+    }
+    strcat(to, slash);
+  }
+  else {
+    if(strlen(save_cwd) + 1 + strlen(from) + 1 > size){
+      fprintf(stderr, "absolutize : unable to fit '%s' into %d chars\n", from,
+	      size);
+      return(NULL);
+    }
+    strcpy(to, save_cwd);
+    strcat(to, "/");
+    strcat(to, from);
+  }
+  chdir(save_cwd);
+  return(to);
+}
+
+static int fix_filenames(char **cmd_ptr)
+{
+  char *cow_file, *backing_file, *equal, *new, *ptr = *cmd_ptr;
+  char full_backing[MAXPATHLEN + 1], full_cow[MAXPATHLEN + 1];
+  int len;
+
+  if(strncmp(ptr, "config", strlen("config"))) return(0);
+  ptr += strlen("config");
+
+  while(isspace(*ptr) && (*ptr != '\0')) ptr++;
+  if(*ptr == '\0') return(0);
+
+  if(strncmp(ptr, "ubd", strlen("ubd"))) return(0);
+
+  while((*ptr != '=') && (*ptr != '\0')) ptr++;
+  if(*ptr == '\0') return(0);
+
+  equal = ptr;
+  cow_file = ptr + 1;
+  while((*ptr != ',') && (*ptr != '\0')) ptr++;
+  if(*ptr == '\0'){
+    backing_file = cow_file;
+    cow_file = NULL;
+  }
+  else {
+    *ptr = '\0';
+    backing_file = ptr + 1;
+  }
+
+  ptr = absolutize(full_backing, sizeof(full_backing), backing_file);
+  backing_file = ptr ? ptr : backing_file;
+
+  if(cow_file != NULL){
+    ptr = absolutize(full_cow, sizeof(full_cow), cow_file);
+    cow_file = ptr ? ptr : cow_file;
+  }
+
+  len = equal - *cmd_ptr;
+  len += strlen("=") + strlen(backing_file) + 1;
+  if(cow_file != NULL){
+    len += strlen(",") + strlen(cow_file);
+  }
+
+  new = malloc(len * sizeof(char));
+  if(new == NULL) return(0);
+
+  strncpy(new, *cmd_ptr, equal - *cmd_ptr);
+  ptr = new + (equal - *cmd_ptr);
+  *ptr++ = '=';
+
+  if(cow_file != NULL){
+    sprintf(ptr, "%s,", cow_file);
+    ptr += strlen(ptr);
+  }
+  strcpy(ptr, backing_file);
+
+  *cmd_ptr = new;
+  return(1);
+}
+
 static void default_cmd(int fd, char *command)
 {
   struct mconsole_request request;
   struct mconsole_reply reply;
   char name[128];
-  int n;
+  int n, free_command;
 
   if((sscanf(command, "%128[^: \f\n\r\t\v]:", name) == 1) &&
      (*(name + 1) == ':')){
@@ -92,11 +198,15 @@ static void default_cmd(int fd, char *command)
     while(isspace(*command)) command++;
   }
 
+  free_command = fix_filenames(&command);
+
   request.magic = MCONSOLE_MAGIC;
   request.version = MCONSOLE_VERSION;
   request.len = MIN(strlen(command), sizeof(reply.data) - 1);
   strncpy(request.data, command, request.len);
   request.data[request.len] = '\0';
+
+  if(free_command) free(command);
 
   if(sendto(fd, &request, sizeof(request), 0, (struct sockaddr *) &sun, 
 	    sizeof(sun)) < 0){
@@ -248,7 +358,7 @@ int main(int argc, char **argv)
 
     if(*command) add_history(command);
 
-    issue_command(fd,command);
+    issue_command(fd, command);
     free(command);
   }
   printf("\n");
