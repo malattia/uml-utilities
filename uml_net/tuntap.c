@@ -23,7 +23,7 @@ static int do_tuntap_up(char *gate_addr, struct output *output,
   int tap_fd;
   char *ifconfig_argv[] = { "ifconfig", ifr->ifr_name, gate_addr, "netmask", 
 			    "255.255.255.255", "up", NULL };
-  char *insmod_argv[] = { "insmod", "tun", NULL };
+  char *insmod_argv[] = { "modprobe", "tun", NULL };
 
   if(setreuid(0, 0) < 0){
     output_errno(output, "setreuid to root failed : ");

@@ -44,9 +44,9 @@ static int maybe_insmod(char *dev, struct output *output)
   int fd, unit;
   char unit_buf[sizeof("unit=nnn\0")];
   char ethertap_buf[sizeof("ethertapnnn\0")];
-  char *ethertap_argv[] = { "insmod", "ethertap", unit_buf, "-o", ethertap_buf,
-			    NULL };
-  char *netlink_argv[] = { "insmod", "netlink_dev", NULL };
+  char *ethertap_argv[] = { "modprobe", "ethertap", unit_buf, "-o", 
+			    ethertap_buf, NULL };
+  char *netlink_argv[] = { "modprobe", "netlink_dev", NULL };
   char buf[256];
   
   if((fd = socket(PF_INET, SOCK_DGRAM, 0)) < 0){
