@@ -2,9 +2,10 @@
 #define _UM_ETH_NET_H
 
 #define UM_ETH_NET_MAX_PACKET	1544
+#define UM_ETH_NET_HDR_SIZE	(sizeof(unsigned int)*2)
+
 #define UM_ETH_NET_PORT		5299
 #define UM_ETH_NET_DEFAULT_NUM	100
-#define UM_ETH_NET_HDR_SIZE	(sizeof(unsigned int)*2)
 
 enum packet_type {
 	PACKET_DATA = 1,
@@ -21,10 +22,11 @@ enum socket_type {
 struct connection_data {
 	enum socket_type stype;
 	int net_num;
+        int too_little;
 	int fd;
 };
 
-extern int packet_output(int, unsigned char *);
+extern int packet_output(int, struct msghdr*);
 extern int packet_input(struct connection_data*);
 extern int socket_phy_setup(char *);
 extern int socket_tap_setup(char *);
@@ -40,6 +42,7 @@ extern fd_set perm;
 
 #define CLOSE_CONNECTION(y)     \
         FD_CLR(y,&perm);        \
+        fprintf(stderr,"socket close\n");\
         close(y);               \
         free(uml_connection[y]);\
         uml_connection[y] = NULL;

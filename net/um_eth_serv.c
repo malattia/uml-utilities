@@ -15,7 +15,7 @@
 #include "um_eth.h"
 
 struct connection_data* uml_connection[1024];
-int debug = 1;
+int debug = 0;
 int high_fd = 0;
 fd_set perm;
 const char* const unix_socket = "/tmp/um_eth";
@@ -42,7 +42,6 @@ int main(int argc,char **argv) {
   struct sockaddr_in *sin;
   struct sockaddr_un *sun;
   fd_set temp;
-  int type;
   int one = 1;
   int new_fd;
   int in;
@@ -122,44 +121,13 @@ int main(int argc,char **argv) {
   FILL_CONNECTION(new_fd);
   uml_connection[new_fd]->stype = SOCKET_LISTEN;
 
-  /*
-   * check the command line for <phy net_num> pairs
-   */
-  if(argc > 1) {
-    if((argc-1) % 2) {
-      fprintf(stderr,"\nInvalid arguments!\n\numl-net [<phy net_num> ...]\n\n");
-      exit(-1);
-    }
-    for(in=1;in<argc;in+=2) {
-      if((new_fd = socket_tap_setup(argv[in])) > 0) {
-        fprintf(stderr,"TAP: %s\n",argv[in]);
-        type = SOCKET_TAP;
-      } else if((new_fd = socket_phy_setup(argv[in])) > 0) {
-        fprintf(stderr,"PHY: %s\n",argv[in]);
-        type = SOCKET_PHY;
-      } else {
-        continue;
-      }
-
-      if((uml_connection[new_fd] = NEW_CONNECTION) == NULL) {
-        perror("malloc of uml_connection data");
-        close(new_fd);
-        continue;
-      }
-
-      FILL_CONNECTION(new_fd);
-      uml_connection[new_fd]->stype = type;
-      uml_connection[new_fd]->net_num = atoi(argv[in+1]);
-    }
-  }
-
   while(1) {
     memcpy(&temp,&perm,sizeof(fd_set));
     if(select(high_fd+1,&temp,NULL,NULL,NULL)>0) {
       for(in=0;in<=high_fd;in++) {
         if((conn_in = uml_connection[in]) == NULL) continue;
         if(!FD_ISSET(in,&temp)) continue;
-	packet_input(conn_in);
+	while(packet_input(conn_in) > 0);
       }
     }
   }

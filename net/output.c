@@ -1,95 +1,80 @@
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include "um_eth.h"
 
-int nb_write(int fd, void* buf, int tot) {
-  int len = 0;
-  int remain = tot;
-  int retval;
-
-try_again:
-  retval = write(fd,buf+len,remain);
-  if(retval < 0) {
-    if(errno == EAGAIN || errno == EINTR) {
-      fprintf(stderr,"out again\n");
-      goto try_again;
-    }
-    return -1;
-  }
-  if(retval < remain) {
-    len += retval;
-    remain -= retval;
-    goto try_again;
-  }
-  return 0;
-}
-
-int packet_output(int in,unsigned char *hbuf) {
+int packet_output(int in,struct  msghdr *msg) {
   struct connection_data *conn_in,*conn_out;
-  unsigned int *hdr = (unsigned int*)hbuf;
-  unsigned char *buf = hbuf + UM_ETH_NET_HDR_SIZE;
-#ifndef TUNTAP
-  unsigned char tapbuf[UM_ETH_NET_HDR_SIZE + 2 + UM_ETH_NET_MAX_PACKET];
-#endif
+  int result = 0;
   int count = 0;
   int out;
-  void* out_buf = NULL;
-  int out_size = 0;
 
   conn_in = uml_connection[in];
 
-  if(debug > 2) {
+  if(debug > 1) {
     fprintf(stderr,"%02d %02d ->",in,conn_in->net_num);
-    dump_packet(buf,ntohl(hdr[1]),0);
+    dump_packet(msg->msg_iov[1].iov_base,msg->msg_iov[1].iov_len,0);
     fprintf(stderr," ->");
   }
 
   for(out=0;out<=high_fd;out++) {
     conn_out = uml_connection[out];
     if(conn_out == NULL) continue;
+    if(conn_out->stype == SOCKET_LISTEN) continue;
 
-    if((out != in) &&
-      (conn_out->net_num == conn_in->net_num)) {
+    if((out != in) && (conn_out->net_num == conn_in->net_num)) {
 
-      if(debug > 1 && conn_out->stype != SOCKET_LISTEN)
+      if(debug > 1) {
         fprintf(stderr," %02d",out);
+      }
+
       switch(conn_out->stype) {
         case SOCKET_CONNECTION:
         {
-	  out_buf = hbuf;
-          out_size = ntohl(hdr[1]) + UM_ETH_NET_HDR_SIZE;
-          break;
-        }
-        case SOCKET_TAP:
-#ifndef TUNTAP
-	/* when sending on the old TAP device you need to
-         * add 2 byte to comply with the DIX format
-         */
-        {
-          memcpy(tapbuf+2,buf,ntohl(hdr[1]));
-          memset(tapbuf,0,2);
-          out_buf = tapbuf;
-          out_size = ntohl(hdr[1])+2;
-          break;
-        }
-#endif
-        case SOCKET_PHY:
-        {
-          out_buf = buf;
-          out_size = ntohl(hdr[1]);
+          int unsent = 0;
+          int size = 0;
+          int dumb = sizeof(size);
+
+          if(ioctl(out,TIOCOUTQ,&unsent) ||
+             getsockopt(out,SOL_SOCKET,SO_SNDBUF,&size,&dumb)) {
+            CLOSE_CONNECTION(out);
+            continue;
+          }
+
+          if((size - unsent) <
+            (msg->msg_iov[0].iov_len+msg->msg_iov[1].iov_len)) {
+            fprintf(stderr,"%d full! packet dropped\n",out);
+            continue;
+          }
+
+send_again:
+          result = sendmsg(out,msg,0);
+          if(result < 0) {
+            if(errno == EINTR || errno == EAGAIN) {
+              CLOSE_CONNECTION(out);
+              goto send_again;
+            }
+          } else if(result != (msg->msg_iov[0].iov_len +
+            msg->msg_iov[1].iov_len)) {
+            if(!result) {
+              fprintf(stderr,"sendmsg zero\n");
+              goto send_again;
+            } else {
+              fprintf(stderr,"sendmsg short write\n");
+            }
+          }
           break;
         }
         case SOCKET_LISTEN:
         default:
           continue;
-      }
-
-      if(nb_write(out,out_buf,out_size)) {
-        close(out);
       }
       count++;
     }
