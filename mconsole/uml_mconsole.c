@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <ctype.h>
 #include <stdint.h>
@@ -62,8 +63,6 @@ static int switch_common(char *name)
 #define MCONSOLE_MAX_DATA (512)
 #define MCONSOLE_VERSION (2)
 
-#define MIN(a,b) ((a)<(b) ? (a):(b))
-
 struct mconsole_request {
 	uint32_t magic;
 	uint32_t version;
@@ -91,8 +90,8 @@ static char *absolutize(char *to, int size, char *from)
   if(slash != NULL){
     *slash = '\0';
     if(chdir(from)){
+      fprintf(stderr, "absolutize : Can't cd to '%s', ", from);
       *slash = '/';
-      fprintf(stderr, "absolutize : Can't cd to '%s'", from);
       perror("");
       return(NULL);
     }
@@ -189,7 +188,7 @@ static void default_cmd(int fd, char *command)
   struct mconsole_request request;
   struct mconsole_reply reply;
   char name[128];
-  int n, free_command;
+  int n, free_command, first;
 
   if((sscanf(command, "%128[^: \f\n\r\t\v]:", name) == 1) &&
      (*(name + 1) == ':')){
@@ -215,28 +214,39 @@ static void default_cmd(int fd, char *command)
     perror("");
     return;
   }
-  
+
+  first = 1;
   do {
     int len = sizeof(sun);
-    n = recvfrom(fd, &reply, sizeof(reply), 0, (struct sockaddr *) &sun, &len);
+    n = recvfrom(fd, &reply, sizeof(reply), 0, NULL, 0);
     if(n < 0){
       perror("recvmsg");
       return;
     }
-    if(reply.err) printf("ERR ");
-    else printf("OK ");
+
+    if(first){
+      if(reply.err) printf("ERR ");
+      else printf("OK ");
+
+      first = 0;
+    }
+
     printf("%s", reply.data);
   } while(reply.more);
 
   printf("\n");
 }
 
+char *local_help = 
+"Additional local mconsole commands:\n\
+    quit - Quit mconsole\n\
+    switch <socket-name> - Switch control to the given machine\n\
+    log -f <filename> - use contents of <filename> as UML log messages\n";
+
 static void help_cmd(int fd, char *command)
 {
   default_cmd(fd, command);
-  printf("Additional local mconsole commands:\n");
-  printf("    quit - Quit mconsole\n");
-  printf("    switch <socket-name> - Switch control to the given machine\n");
+  printf("%s", local_help);
 }
 
 static void switch_cmd(int fd, char *command)
@@ -247,6 +257,48 @@ static void switch_cmd(int fd, char *command)
   while(isspace(*ptr)) ptr++;
   if(switch_common(ptr)) return;
   printf("Switched to '%s'\n", ptr);
+}
+
+static void log_cmd(int fd, char *command)
+{
+  int len, max, chunk, input_fd;
+  char *ptr, buf[sizeof(((struct mconsole_request *) NULL)->data)];
+
+  ptr = &command[strlen("log")];
+  while(isspace(*ptr)) ptr++;
+
+  max = sizeof(((struct mconsole_request *) NULL)->data) - sizeof("log ") - 1;
+
+  if(!strncmp(ptr, "-f", strlen("-f"))){
+    ptr = &ptr[strlen("-f")];
+    while(isspace(*ptr)) ptr++;
+    input_fd = open(ptr, O_RDONLY);
+    if(input_fd < 0){
+      perror("opening file");
+      exit(1);
+    }
+    strcpy(buf, "log ");
+    ptr = buf + strlen(buf);
+    while((len = read(input_fd, ptr, max)) > 0){
+      ptr[len] = '\0';
+      default_cmd(fd, buf);
+    }
+    if(len < 0){
+      perror("reading file");
+      exit(1);
+    }
+  }
+  else {
+    len = strlen(ptr);
+    while(len > 0){
+      chunk = MIN(len, max);
+      sprintf(buf, "log %.*s", chunk, ptr);
+      default_cmd(fd, buf);
+
+      len -= chunk;
+      ptr += chunk;
+    }
+  }
 }
 
 static void quit_cmd(int fd, char *command)
@@ -263,6 +315,7 @@ static struct cmd cmds[] = {
   { "quit", quit_cmd },
   { "help", help_cmd },
   { "switch", switch_cmd },
+  { "log", log_cmd },
   { NULL, default_cmd }
 };
 
