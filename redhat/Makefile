@@ -2,6 +2,7 @@ all :
 
 install :
 	install mkrootfs $(DESTDIR)/usr/bin
-	install functions.sh $(DESTDIR)/var/lib/uml
+	install -d $(DESTDIR)/var/lib/uml
+	install functions $(DESTDIR)/var/lib/uml
 
 clean :

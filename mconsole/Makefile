@@ -11,4 +11,4 @@ clean :
 	rm -f $(BIN) $(OBJS) *~
 
 install :
-	install $(BIN) /usr/bin
+	install $(BIN) $(DESTDIR)/usr/bin

@@ -10,4 +10,4 @@ clean :
 	rm -f uml_net $(OBJS) *~
 
 install :
-	install uml_net /usr/bin
+	install -m 04755 uml_net $(DESTDIR)/usr/bin
