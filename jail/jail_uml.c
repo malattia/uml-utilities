@@ -42,6 +42,7 @@ int main(int argc, char **argv)
   }
 
   execv(argv[0], argv);
-  perror("execve");
+  fprintf(stderr, "execve of %s failed : ", argv[0]);
+  perror("");
   exit(1);
 }
