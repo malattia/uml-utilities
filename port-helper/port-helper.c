@@ -7,11 +7,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-static void hup(int sig)
-{
-  exit(0);
-}
-
 static void send_fd(int fd, int target)
 {
   char anc[CMSG_SPACE(sizeof(fd))];
@@ -45,13 +40,9 @@ static void send_fd(int fd, int target)
 
 int main(int argc, char **argv)
 {
-  char c;
-
   signal(SIGHUP, SIG_IGN);
   if(ioctl(0, TIOCNOTTY, 0) < 0)
     perror("TIOCNOTTY failed");
-  signal(SIGHUP, hup);
   send_fd(0, 3);
-  read(3, &c, sizeof(c));
   return(0);
 }
