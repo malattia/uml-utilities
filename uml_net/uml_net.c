@@ -128,8 +128,9 @@ static int maybe_insmod(char *dev)
   int fd, unit;
   char unit_buf[sizeof("unit=nnn\0")];
   char ethertap_buf[sizeof("ethertapnnn\0")];
-  char *insmod_argv[] = { "insmod", "ethertap", unit_buf, "-o", ethertap_buf,
-			  NULL };
+  char *ethertap_argv[] = { "insmod", "ethertap", unit_buf, "-o", ethertap_buf,
+			    NULL };
+  char *netlink_argv[] = { "insmod", "netlink_dev", NULL };
   
   if((fd = socket(PF_INET, SOCK_DGRAM, 0)) < 0){
     perror("socket");
@@ -147,40 +148,34 @@ static int maybe_insmod(char *dev)
   }
   sprintf(unit_buf, "unit=%d", unit);
   sprintf(ethertap_buf, "ethertap%d", unit);
-  return(do_exec(insmod_argv, 0, NULL));
+  do_exec(netlink_argv, 0, NULL);
+  return(do_exec(ethertap_argv, 0, NULL));
 }
 
 /* This is a routine to do a 'mknod' on the /dev/tap<n> if possible:
  * Return: 0 is ok, -1=already open, etc.
  */
 
-static int mk_node(char *devname)
+static int mk_node(char *devname, int major, int minor)
 {
   struct stat statval;
   int retval;
-  int minor; /* the minor number for the tap device. */
 
   /* first do a stat on the node to see whether it exists and we
    * had some other reason to fail:
    */
-  retval=stat(devname,&statval);
-  if(!retval || (errno != ENOENT)){
+  retval = stat(devname, &statval);
+  if(retval == 0) return(0);
+  else if(errno != ENOENT){
     /* it does exist. We are just going to return -1, 'cause there
      * was some other problem in the open :-(.
      */
     return -1;
   }
+
   /* It doesn't exist. We can create it. */
 
-  if(sscanf(devname, "/dev/tap%d", &minor) != 1){
-    fprintf(stderr, "failed to get unit number from '%s'\n", devname);
-    return(-1);
-  }
-  minor += TAP_MINOR;
-
-  /* Now to do a mknod on it: */
-
-  return(mknod(devname, S_IFCHR|S_IREAD|S_IWRITE, makedev(TAP_MAJOR,minor)));
+  return(mknod(devname, S_IFCHR|S_IREAD|S_IWRITE, makedev(major, minor)));
 }
 
 static int route_and_arp(char *dev, char *addr, int need_route, 
@@ -248,7 +243,7 @@ static void ethertap(char *dev, int data_fd, int control_fd, char *gate,
 			    "netmask", "255.255.255.255", "up", NULL };
   char *down_argv[] = { "ifconfig", dev, "0.0.0.0", "down", NULL };
   char dev_file[sizeof("/dev/tapxxxx\0")], c;
-  int tap;
+  int tap, minor;
 
   signal(SIGHUP, SIG_IGN);
   if(setreuid(0, 0) < 0){
@@ -269,7 +264,14 @@ static void ethertap(char *dev, int data_fd, int control_fd, char *gate,
   }
   sprintf(dev_file, "/dev/%s", dev);
 
-  mk_node(dev_file); /* do a mknod on it if it doesn't exist. */
+/* do a mknod on it in case it doesn't exist. */
+
+  if(sscanf(dev_file, "/dev/tap%d", &minor) != 1){
+    fprintf(stderr, "failed to get unit number from '%s'\n", dev_file);
+    fail(control_fd);
+  }
+  minor += TAP_MINOR;
+  mk_node(dev_file, TAP_MAJOR, minor); 
 
   if((tap = open(dev_file, O_RDWR | O_NONBLOCK)) < 0){
     perror("open");
@@ -429,8 +431,10 @@ static void tuntap_up(int argc, char **argv)
   struct cmsghdr *cmsg;
   char *ifconfig_argv[] = { "ifconfig", ifr.ifr_name, gate_addr, "netmask", 
 			    "255.255.255.255", "up", NULL };
+  char *insmod_argv[] = { "insmod", "tun", NULL };
   struct output output = INIT_OUTPUT;
-  struct iovec iov[2]; 
+  struct iovec iov[2];
+  int retval;
 
   msg.msg_control = NULL;
   msg.msg_controllen = 0;
@@ -439,6 +443,16 @@ static void tuntap_up(int argc, char **argv)
     output_errno(&output, "setreuid to root failed : ");
     goto out;
   }
+
+  /* XXX hardcoded dir name and perms */
+  umask(0);
+  retval = mkdir("/dev/net", 0755);
+
+  /* #includes for MISC_MAJOR and TUN_MINOR bomb in userspace */
+  mk_node("/dev/net/tun", 10, 200);
+
+  do_exec(insmod_argv, 0, &output);
+  
   if((tap_fd = open("/dev/net/tun", O_RDWR)) < 0){
     output_errno(&output, "Opening /dev/net/tun failed : ");
     goto out;
