@@ -385,9 +385,16 @@ void bind_sockets(int ctl_fd, const char *ctl_name, int data_fd)
 
 static void Usage(void)
 {
-  fprintf(stderr, "Usage : %s [ -unix control-socket ] [ -hub ]\n"
+  char *tap_str = "";
+
+#ifdef TUNTAP
+  tap_str = "[ -tap tap-device ]";
+#endif
+
+  fprintf(stderr, "Usage : %s [ -unix control-socket ] [ -hub ] %s\n"
 	  "or : %s -compat-v0 [ -unix control-socket data-socket ] "
-	  "[ -hub ]\n", prog, prog);
+	  "[ -hub ] %s\n", prog, tap_str, prog, tap_str);
+
   exit(1);
 }
 
@@ -404,18 +411,23 @@ int main(int argc, char **argv)
   argc--;
   while(argc > 0){
     if(!strcmp(argv[0], "-unix")){
-      if(argc < 2) Usage();
+      if(argc < 2) 
+	Usage();
       ctl_socket = argv[1];
       argc -= 2;
       argv += 2;
-      if(!compat_v0) break;
-      if(argc < 1) Usage();
+      if(!compat_v0) 
+	continue;
+      if(argc < 1) 
+	Usage();
       data_socket = argv[0];
       argc--;
       argv++;
     }
-    if(!strcmp(argv[0], "-tap")){
+    else if(!strcmp(argv[0], "-tap")){
 #ifdef TUNTAP
+      if(argc < 2) 
+	Usage();
       tap_dev = argv[1];
       argv += 2;
       argc -= 2;
@@ -480,9 +492,15 @@ int main(int argc, char **argv)
   hash_init();
 
   if(compat_v0) 
-    printf("%s attached to unix sockets '%s' and '%s'\n", prog, ctl_socket,
+    printf("%s attached to unix sockets '%s' and '%s'", prog, ctl_socket,
 	   data_socket);
-  else printf("%s attached to unix socket '%s'\n", prog, ctl_socket);
+  else printf("%s attached to unix socket '%s'", prog, ctl_socket);
+
+#ifdef TUNTAP
+  if(tap_dev != NULL)
+    printf(" tap device '%s'", tap_dev);
+#endif
+  printf("\n");
 
   if(isatty(0))
     add_fd(0);
