@@ -89,10 +89,15 @@ system stty -echo raw
 set timeout -1
 
 proc get_module_path {modname} {
-    global MODULE_PATHS ARG
+    global MODULE_PATHS ARG env
 
     set idx [lsearch $MODULE_PATHS $modname]
     if {$idx == -1} {
+	set version "[exec ./linux --version]"
+	set path "[exec find $env(PWD)/lib/modules/$version/ -name ${modname}.o ]"
+	if {$path != ""} {
+	    return $path
+	}
         return 0
     }
 
@@ -112,7 +117,7 @@ proc get_module_path {modname} {
 #######################################################################
 
 proc do_insmod {name} {
-    global GDB
+    global GDB ARG
 
     set timeout 5
 
@@ -289,9 +294,6 @@ proc prompt_wait {prompt} {
 proc initgdb {pid} {
     global GDB
 
-    prompt_wait $GDB
-    send "b sys_init_module\r"
-
 ##
 # user can press the 'enter' once they start the UML kernel.
 ##
@@ -299,6 +301,23 @@ proc initgdb {pid} {
     prompt_wait $GDB
     send "att 1"
 
+    prompt_wait $GDB
+    send "b sys_init_module\r"
+
+    prompt_wait $GDB
+    send "b panic\r"
+
+    prompt_wait $GDB
+    send "b stop\r"
+
+    prompt_wait $GDB
+    send "handle SIGWINCH nostop noprint pass\r"
+
+    prompt_wait $GDB
+    send "b start_kernel\r"
+
+    prompt_wait $GDB
+    send "c\r"
 }
 
 ##
@@ -325,5 +344,3 @@ shell
 system stty sane
 
 puts "\r----- umlgdb finished----\r"
-
-
