@@ -58,7 +58,6 @@ static void tuntap_up(int fd, char *gate_addr)
   memset(&ifr, 0, sizeof(ifr));
   ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
   ifr.ifr_name[0] = '\0';
-  sleep(100000);
   if(ioctl(tap_fd, TUNSETIFF, (void *) &ifr) < 0){
     output_errno(&output, "TUNSETIFF : ");
     goto out;
