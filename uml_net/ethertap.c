@@ -22,12 +22,11 @@ static void fail(int fd)
 
   if(write(fd, &c, sizeof(c)) != sizeof(c))
     perror("Writing failure byte");
-  exit(1);
 }
 
 void output_fail(struct output *output, int fd)
 {
-  if(output == NULL) fail(fd);
+  fail(fd);
   write_output(fd, output);
   exit(1);
 }
@@ -261,9 +260,16 @@ void ethertap_v3(int argc, char **argv)
 
 void ethertap_v4(int argc, char **argv)
 {
-  char *dev = argv[0];
-  int data_fd = atoi(argv[1]);
-  char *gate = argv[2];
+  char *dev, *gate;
+  int data_fd;
+  struct output output = INIT_OUTPUT;
 
+  if(argc < 3){
+    add_output(&output, "uml_net : Too few arguments to ethertap_v4\n", -1);
+    output_fail(&output, 1);
+  }
+  dev = argv[0];
+  data_fd = atoi(argv[1]);
+  gate = argv[2];
   ethertap(dev, data_fd, 1, gate, NULL, 1, control_v4);
 }
