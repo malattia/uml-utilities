@@ -1,5 +1,5 @@
 SUBDIRS = mconsole moo uml_net uml_router
-TARBALL = ../uml_utilities_$(shell date +%Y%m%d).tar
+TARBALL = uml_utilities_$(shell date +%Y%m%d).tar
 
 all install: 
 	set -e ; for dir in $(SUBDIRS); do $(MAKE) -C $$dir $@; done
