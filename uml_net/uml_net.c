@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <ctype.h>
+#include <sys/uio.h>
 #ifdef TUNTAP
 #include <linux/if_tun.h>
 #endif
@@ -443,7 +444,7 @@ static void tuntap_up(int argc, char **argv)
     goto out;
   }
   memset(&ifr, 0, sizeof(ifr));
-  ifr.ifr_flags = IFF_TAP;
+  ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
   ifr.ifr_name[0] = '\0';
   if(ioctl(tap_fd, TUNSETIFF, (void *) &ifr) < 0){
     output_errno(&output, "TUNSETIFF");
