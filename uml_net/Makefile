@@ -1,15 +1,16 @@
 OBJS = uml_net.o
+BIN = uml_net
 TUNTAP = $(shell [ -e /usr/include/linux/if_tun.h ] && echo -DTUNTAP)
 CFLAGS = -g -Wall $(TUNTAP)
 
-all : uml_net
+all : $(BIN)
 
-uml_net : $(OBJS)
-	$(CC) $(CFLAGS) -o uml_net $(OBJS)
+$(BIN) : $(OBJS)
+	$(CC) $(CFLAGS) -o $(BIN) $(OBJS)
 
 clean : 
-	rm -f uml_net $(OBJS) *~
+	rm -f $(BIN) $(OBJS) *~
 
-install :
+install : $(BIN)
 	install -d $(DESTDIR)/usr/bin
-	install -s -m 04755 uml_net $(DESTDIR)/usr/bin
+	install -s -m 04755 $(BIN) $(DESTDIR)/usr/bin

@@ -1,14 +1,15 @@
 OBJS = uml_router.o
+BIN = uml_router
 CFLAGS = -g -Wall
 
-all : uml_router
+all : $(BIN)
 
-uml_router : $(OBJS)
-	$(CC) $(CFLAGS) -o uml_router $(OBJS)
+$(BIN) : $(OBJS)
+	$(CC) $(CFLAGS) -o $(BIN) $(OBJS)
 
 clean : 
-	rm -f uml_router $(OBJS) *~
+	rm -f $(BIN) $(OBJS) *~
 
-install :
+install : $(BIN)
 	install -d $(DESTDIR)/usr/bin
-	install -s uml_router $(DESTDIR)/usr/bin
+	install -s $(BIN) $(DESTDIR)/usr/bin

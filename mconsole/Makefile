@@ -10,6 +10,6 @@ $(BIN) : $(OBJS)
 clean : 
 	rm -f $(BIN) $(OBJS) *~
 
-install :
+install : $(BIN)
 	install -d $(DESTDIR)/usr/bin
 	install -s $(BIN) $(DESTDIR)/usr/bin
