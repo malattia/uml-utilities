@@ -15,6 +15,7 @@ $hppfs->add("devices" => remove_line("ubd"),
 	    "interrupts" => proc("interrupts"),
 	    "iomem" => proc("iomem"),
 	    "ioports" => proc("ioports"),
+	    "pid/mounts" => remove_line("hppfs"),
 	    "mounts" => remove_line("hppfs"),
 	    "version" => proc("version") );
 
