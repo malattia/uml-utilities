@@ -6,4 +6,4 @@ jail_uml : jail_uml.c
 install :
 
 clean :
-	rm -f *~ jail_uml
+	rm -rf *~ jail_uml cell[0-9]* core* tty_log_cell*
