@@ -1,3 +1,8 @@
+# 
+# Copyright (C) 2002, 2003 Jeff Dike (jdike@karaya.com)
+# Licensed under the GPL
+#
+
 use hppfs;
 use hppfslib;
 use strict;
@@ -8,15 +13,17 @@ my $dir;
 
 my $hppfs = hppfs->new($dir);
 
-$hppfs->add("devices" => remove_line("ubd"),
+my $remove_filesystems = remove_lines("hppfs", "hostfs");
+
+$hppfs->add("devices" => remove_lines("ubd"),
 	    "uptime" => proc("uptime"),
 	    "exitcode" => "remove",
-	    "filesystems" => remove_line("hppfs"),
+	    "filesystems" => $remove_filesystems,
 	    "interrupts" => proc("interrupts"),
 	    "iomem" => proc("iomem"),
 	    "ioports" => proc("ioports"),
-	    "pid/mounts" => remove_line("hppfs"),
-	    "mounts" => remove_line("hppfs"),
+	    "pid/mounts" => $remove_filesystems,
+	    "mounts" => $remove_filesystems,
 	    "version" => proc("version") );
 
 $hppfs->handler();
