@@ -8,3 +8,6 @@ uml_router : $(OBJS)
 
 clean : 
 	rm -f uml_router $(OBJS) *~
+
+install :
+	install uml_router /usr/bin
