@@ -4,13 +4,14 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include "switch.h"
 #include "hash.h"
 #include "port.h"
 
 struct packet {
   struct {
-    unsigned char dest[6];
-    unsigned char src[6];
+    unsigned char dest[ETH_ALEN];
+    unsigned char src[ETH_ALEN];
     unsigned char proto[2];
   } header;
   unsigned char data[1500];
@@ -22,6 +23,7 @@ struct port {
   int control;
   void *data;
   int data_len;
+  unsigned char src[ETH_ALEN];
   void (*sender)(int fd, void *packet, int len, void *data);
 };
 
@@ -48,6 +50,7 @@ void close_port(int fd)
     fprintf(stderr, "No port associated with descriptor %d\n", fd);
     return;
   }
+  delete_hash(port->src);
   free_port(port);
 }
 
@@ -74,6 +77,7 @@ static void update_src(struct port *port, struct packet *p)
     }
     printf("\n");
 
+    memcpy(port->src, p->header.src, sizeof(port->src));
     insert_into_hash(p->header.src, port);
   }
   update_entry_time(p->header.src);
