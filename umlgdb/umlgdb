@@ -89,7 +89,7 @@ system stty -echo raw
 set timeout -1
 
 proc get_module_path {modname} {
-    global MODULE_PATHS
+    global MODULE_PATHS ARG
 
     set idx [lsearch $MODULE_PATHS $modname]
     if {$idx == -1} {
@@ -149,7 +149,7 @@ proc do_insmod {name} {
         # Reload all kernel symbols
         ##
         prompt_wait $GDB
-        send "symbol-file ./linux\r"
+        send "symbol-file $ARG\r"
         prompt_wait "y or n"
         send "y\r"
 
