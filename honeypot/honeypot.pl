@@ -15,15 +15,23 @@ my $hppfs = hppfs->new($dir);
 
 my $remove_filesystems = remove_lines("hppfs", "hostfs");
 
-$hppfs->add("devices" => remove_lines("ubd"),
-	    "uptime" => proc("uptime"),
+# Need to be able to add directories, i.e. driver, bus/pci
+# partitions needs work
+# slabinfo if UML ever uses the slab cache for anything
+
+$hppfs->add("cmdline" => proc("cmdline"),
+	    "cpuinfo" => proc("cpuinfo"),
+	    "dma" => proc("dma"),
+	    "devices" => remove_lines("ubd"),
 	    "exitcode" => "remove",
 	    "filesystems" => $remove_filesystems,
 	    "interrupts" => proc("interrupts"),
 	    "iomem" => proc("iomem"),
 	    "ioports" => proc("ioports"),
-	    "pid/mounts" => $remove_filesystems,
 	    "mounts" => $remove_filesystems,
+	    "pid/mounts" => $remove_filesystems,
+	    "stat" => proc("stat"),
+	    "uptime" => proc("uptime"),
 	    "version" => proc("version") );
 
 $hppfs->handler();
