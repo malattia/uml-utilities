@@ -10,7 +10,8 @@ sub Usage {
     print "Usage : jailer.pl uml-binary root-filesystem uid [ -n ] " .
 	"[ -v ]\n";
     print "\t[ -net 0.0.0.0 uml-ip -bridge device,device,... ]\n";
-    print "\t[ -net host-ip uml-ip] [ -tty-log ] [ more uml arguments ... ]\n";
+    print "\t[ -net host-ip uml-ip] [ -tty-log ] [ -r cell ] [ -p ]\n";
+    print "[ more uml arguments ... ]\n";
     print "Required arguments:\n";
     print "\tuml-binary is the path of the UML 'linux' executable\n\n";
     print "\troot-filesystem is the path of the filesystem that it will " .
@@ -29,6 +30,9 @@ sub Usage {
     print "\t-bridge, the new TAP device will be bridged with the devices\n";
     print "\tspecified.  The host-ip address will assigned to the bridge.\n";
     print "\t-tty-log enables logging of tty traffic and process execs\n\n";
+    print "\t-r specifies a cell to reuse\n";
+    print "\t-p the cell will be persistent (not be removed after the UML\n";
+    print "\texits)\n";
     print "Any further arguments will simply be appended to the UML command " .
 	"line\n";
 	
@@ -42,6 +46,8 @@ my $tty_log = 0;
 my $verbose = 0;
 my @bridge_devices = ();
 my $dry_run = 0;
+my $persistent = 0;
+my $reuse;
 
 while(1){
     if($uml_args[0] eq "-net"){
@@ -66,6 +72,14 @@ while(1){
         shift @uml_args;
         $dry_run = 1;
     }
+    elsif($uml_args[0] eq "-r"){
+	(undef, $reuse, @uml_args) = @uml_args;
+	! -d $reuse and die "'$reuse' is not a directory";
+    }
+    elsif($uml_args[0] eq "-p"){
+	shift @uml_args;
+	$persistent = 1;
+    }
     else {
 	last;
     }
@@ -73,12 +87,18 @@ while(1){
 
 (!defined($uml) || !defined($rootfs) || !defined($uid)) and Usage();
 
+my $status = run_output_status("ldd $uml");
+$status == 0 and die "The UML binary should be statically linked - enable " .
+    "CONFIG_STATIC_LINK in the UML build";
+
 if(@bridge_devices && !defined($uml_ip)){
     print "-bridge requires -net\n";
     Usage();
 }
 
-my @cmds = ("mkdir", "tar", "cp", "basename", "rm", @net_cmds );
+my @cmds = ("tar", "cp", "basename", "rm", @net_cmds );
+
+!defined($reuse) and push @cmds, "mkdir";
 
 my $sudo = "";
 if($UID != 0){
@@ -98,13 +118,6 @@ if(@dont_have){
 	join(" ", @dont_have) . "\n";
     exit 1;
 }
-
-my $n = 0;
-
-while(-e "cell$n"){
-    $n++;
-}
-my $cell = "cell$n";
 
 my $out;
 my @more_args = ();
@@ -196,6 +209,20 @@ if($tty_log == 1){
 
 push @more_args, "uml_dir=/tmp";
 
+my $cell;
+
+if(!defined($reuse)){
+    my $n = 0;
+
+    while(-e "cell$n"){
+	$n++;
+    }
+    $cell = "cell$n";
+}
+else {
+    $cell = $reuse;
+}
+
 print "New inmate assigned to '$cell'\n";
 print "	UML image : $uml\n";
 print "	Root filesystem : $rootfs\n";
@@ -218,24 +245,26 @@ if($tty_log == 1){
 print "	Extra arguments : '" . join(" ", @uml_args) . "'\n";
 print "\n";
 
-run("mkdir $cell");
-run("chmod 755 $cell");
+if(!defined($reuse)){
+    run("mkdir $cell");
+    run("chmod 755 $cell");
 
-my $cell_tar = "cell.tar";
-run("cd $cell ; $sudo tar xpf ../$cell_tar");
+    my $cell_tar = "cell.tar";
+    run("cd $cell ; $sudo tar xpf ../$cell_tar");
 
-run("$sudo chown $uid $cell/tmp");
-run("$sudo chmod 777 $cell/tmp");
+    run("$sudo chown $uid $cell/tmp");
+    run("$sudo chmod 777 $cell/tmp");
 
-print "Copying '$uml' and '$rootfs' to '$cell'...";
-run("cp $uml $rootfs $cell");
-print "done\n\n";
+    print "Copying '$uml' and '$rootfs' to '$cell'...";
+    run("cp $uml $rootfs $cell");
+    print "done\n\n";
 
-if(-e "/proc/mm"){
-    run("mkdir $cell/proc");
-    run("chmod 755 $cell/proc");
-    run("touch $cell/proc/mm");
-    run("$sudo mount --bind /proc/mm $cell/proc/mm");
+    if(-e "/proc/mm"){
+	run("mkdir $cell/proc");
+	run("chmod 755 $cell/proc");
+	run("touch $cell/proc/mm");
+	run("$sudo mount --bind /proc/mm $cell/proc/mm");
+    }
 }
 
 $uml = `basename $uml`;
@@ -259,8 +288,10 @@ else {
     print join(" ", @args) . "\n";
 }
 
--e "$cell/proc/mm" and run("$sudo umount $cell/proc/mm");
-run("$sudo rm -rf $cell");
+if(!$persistent){
+    -e "$cell/proc/mm" and run("$sudo umount $cell/proc/mm");
+    run("$sudo rm -rf $cell");
+}
 
 if(defined($tap)){
     run("$sudo ifconfig $tap down");
