@@ -114,7 +114,7 @@ int is_a_device(char *dev)
 int route_and_arp(char *dev, char *addr, char *netmask, int need_route,
 		  struct output *output)
 {
-  char echo[sizeof("echo 1 > /proc/sys/net/ipv4/conf/XXXXXXXXXX/proxy_arp")];
+  char echo[sizeof("echo 1 > /proc/sys/net/ipv4/conf/XXXXXXXXX/proxy_arp")];
   char *echo_argv[] = { "bash", "-c", echo, NULL };
   char *route_argv[] = { "route", "add", "-host", addr, "dev", dev, NULL };
   char *arp_argv[] = { "arp", "-Ds", addr, "eth0",  "pub", NULL };
@@ -126,8 +126,7 @@ int route_and_arp(char *dev, char *addr, char *netmask, int need_route,
   }
   if(do_exec(route_argv, need_route, output)) return(-1);
   snprintf(echo, sizeof(echo) - 1, 
-	   "echo 1 > /proc/sys/net/ipv4/conf/%s/proxy_arp", dev);
-  echo[sizeof(echo) - 1] = '\0';
+	   "echo 1 > /proc/sys/net/ipv4/conf/%.9s/proxy_arp", dev);
   do_exec(echo_argv, 0, output);
   if(netmask) local_net_do(arp_argv, 3, addr, netmask, dev, output);
   else do_exec(arp_argv, 0, output);
@@ -137,7 +136,7 @@ int route_and_arp(char *dev, char *addr, char *netmask, int need_route,
 int no_route_and_arp(char *dev, char *addr, char *netmask, 
 		     struct output *output)
 {
-  char echo[sizeof("echo 0 > /proc/sys/net/ipv4/conf/XXXXXXXXXX/proxy_arp")];
+  char echo[sizeof("echo 0 > /proc/sys/net/ipv4/conf/XXXXXXXXX/proxy_arp")];
   char *no_echo_argv[] = { "bash", "-c", echo, NULL };
   char *no_route_argv[] = { "route", "del", "-host", addr, "dev", dev, NULL };
   char *no_arp_argv[] = { "arp", "-i", "eth0", "-d", addr, "pub", NULL };
@@ -149,8 +148,7 @@ int no_route_and_arp(char *dev, char *addr, char *netmask,
   }
   do_exec(no_route_argv, 0, output);
   snprintf(echo, sizeof(echo) - 1, 
-	   "echo 0 > /proc/sys/net/ipv4/conf/%s/proxy_arp", dev);
-  echo[sizeof(echo) - 1] = '\0';
+	   "echo 0 > /proc/sys/net/ipv4/conf/%.9s/proxy_arp", dev);
   do_exec(no_echo_argv, 0, output);
   if(netmask) local_net_do(no_arp_argv, 2, addr, netmask, dev, output);
   else do_exec(no_arp_argv, 0, output);
@@ -172,11 +170,9 @@ void address_change(enum change_type what, unsigned char *addr_str, char *dev,
 
   snprintf(addr, sizeof(addr) - 1, "%d.%d.%d.%d", addr_str[0], addr_str[1], 
 	   addr_str[2], addr_str[3]);
-  addr[sizeof(addr) - 1] = '\0';
   if(netmask_str != NULL){
     snprintf(netmask, sizeof(netmask) - 1, "%d.%d.%d.%d", netmask_str[0], 
 	     netmask_str[1], netmask_str[2], netmask_str[3]);
-    netmask[sizeof(netmask) - 1] = '\0';
     n = netmask;
   }
   switch(what){

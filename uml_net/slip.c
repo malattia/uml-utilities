@@ -33,7 +33,6 @@ static void slip_up(int fd, char *gate_addr, char *remote_addr,
     exit(1);
   }
   snprintf(slip_name, sizeof(slip_name) - 1, "sl%d", n);
-  slip_name[sizeof(slip_name) - 1] = '\0';
   if(do_exec(up_argv, 1, output)){
     write_output(1, output);
     exit(1);
