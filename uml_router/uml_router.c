@@ -375,7 +375,7 @@ int main(int argc, char **argv)
   printf("%s attached to unix sockets '%s' and '%s'\n", prog, ctl_socket,
 	 data_socket);
   FD_ZERO(&perm_fds);
-  FD_SET(0, &perm_fds);
+  if(isatty(0)) FD_SET(0, &perm_fds);
   FD_SET(connect_fd, &perm_fds);
   FD_SET(data_fd, &perm_fds);
   max_fd = (connect_fd > data_fd ? connect_fd : data_fd);
@@ -399,6 +399,7 @@ int main(int argc, char **argv)
 	printf("EOF on stdin, cleaning up and exiting\n");
 	break;
       }
+      continue;
     }
     else if(FD_ISSET(connect_fd, &temp)){
       accept_connection(connect_fd);
