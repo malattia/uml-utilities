@@ -1,5 +1,26 @@
-/* Copyright 2001 Jeff Dike and others
- * Licensed under the GPL
+/* (c) Copyright 2001-2004 Jeff Dike and others
+ * Licensed under the GPL, see file COPYING
+ *
+ * This is uml_console version 2, a tool for querying a User Mode Linux 
+ * instance over a local pipe connection. This tool needs to be in sync
+ * with the version of the UML kernel.
+ *
+ * There are a very few local commands that this program knows
+ * about, but by default everything gets processed by UML.
+ *
+ * The uml_mconsole documentation distributed with covers all mconsole
+ * commands, so the docs have to be kept in sync with the kernel.
+ * In future it should be possible for the docs to come from (or be
+ * in common with) something over in the kernel source.
+ *
+ * If you are looking for the command implementation, go to the
+ * files mconsole_kern.c in the Linux kernel source under arch/um.
+ * 
+ * The program exits with error values of:
+ *
+ *      0    No error
+ *      1    Error     (need better breakdown of error type in future)
+ *
  */
 
 #include <stdio.h>
@@ -27,7 +48,7 @@ static int do_switch(char *file, char *name)
   if(stat(file, &buf) == -1){
     fprintf(stderr, "Warning: couldn't stat file: %s - ", file);
     perror("");
-    return(-1);
+    return(1);
   }
   sun.sun_family = AF_UNIX;
   strncpy(sun.sun_path, file, sizeof(sun.sun_path));
@@ -183,7 +204,7 @@ static int fix_filenames(char **cmd_ptr)
   return(1);
 }
 
-static void default_cmd(int fd, char *command)
+static int default_cmd(int fd, char *command)
 {
   struct mconsole_request request;
   struct mconsole_reply reply;
@@ -192,7 +213,8 @@ static void default_cmd(int fd, char *command)
 
   if((sscanf(command, "%128[^: \f\n\r\t\v]:", name) == 1) &&
      (*(name + 1) == ':')){
-    if(switch_common(name)) return;
+    if(switch_common(name)) 
+      return(1);
     command = strchr(command, ':');
     *command++ = '\0';
     while(isspace(*command)) command++;
@@ -212,16 +234,15 @@ static void default_cmd(int fd, char *command)
 	    sizeof(sun)) < 0){
     fprintf(stderr, "Sending command to '%s' : ", sun.sun_path);
     perror("");
-    return;
+    return(1);
   }
 
   first = 1;
   do {
-    int len = sizeof(sun);
     n = recvfrom(fd, &reply, sizeof(reply), 0, NULL, 0);
     if(n < 0){
       perror("recvmsg");
-      return;
+      return(1);
     }
 
     if(first){
@@ -235,33 +256,37 @@ static void default_cmd(int fd, char *command)
   } while(reply.more);
 
   printf("\n");
+  return(reply.err);
 }
 
 char *local_help = 
 "Additional local mconsole commands:\n\
     quit - Quit mconsole\n\
     switch <socket-name> - Switch control to the given machine\n\
-    log -f <filename> - use contents of <filename> as UML log messages\n";
+    log -f <filename> - use contents of <filename> as UML log messages\n\
+    mconsole-version - version of this mconsole program\n";
 
-static void help_cmd(int fd, char *command)
+static int help_cmd(int fd, char *command)
 {
   default_cmd(fd, command);
   printf("%s", local_help);
+  return(0);
 }
 
-static void switch_cmd(int fd, char *command)
+static int switch_cmd(int fd, char *command)
 {
   char *ptr;
 
   ptr = &command[strlen("switch")];
   while(isspace(*ptr)) ptr++;
-  if(switch_common(ptr)) return;
+  if(switch_common(ptr)) return(1);
   printf("Switched to '%s'\n", ptr);
+  return(0);
 }
 
-static void log_cmd(int fd, char *command)
+static int log_cmd(int fd, char *command)
 {
-  int len, max, chunk, input_fd;
+  int len, max, chunk, input_fd, newline = 0;
   char *ptr, buf[sizeof(((struct mconsole_request *) NULL)->data)];
 
   ptr = &command[strlen("log")];
@@ -282,6 +307,7 @@ static void log_cmd(int fd, char *command)
     while((len = read(input_fd, ptr, max)) > 0){
       ptr[len] = '\0';
       default_cmd(fd, buf);
+      newline = (ptr[len - 1] == '\n');
     }
     if(len < 0){
       perror("reading file");
@@ -294,21 +320,33 @@ static void log_cmd(int fd, char *command)
       chunk = MIN(len, max);
       sprintf(buf, "log %.*s", chunk, ptr);
       default_cmd(fd, buf);
+      newline = (ptr[chunk - 1] == '\n');
 
       len -= chunk;
       ptr += chunk;
     }
   }
+  if(!newline){
+    sprintf(buf, "log \n");
+    default_cmd(fd, buf);
+  }
+  return(0);
 }
 
-static void quit_cmd(int fd, char *command)
+static int quit_cmd(int fd, char *command)
 {
   exit(0);
 }
 
+static int mversion_cmd(int fd, char *command)
+{
+  printf("uml_mconsole client version %d\n", MCONSOLE_VERSION);
+  return(0);
+}
+
 struct cmd {
   char *command;
-  void (*proc)(int, char *);
+  int (*proc)(int, char *);
 };
 
 static struct cmd cmds[] = {
@@ -316,14 +354,16 @@ static struct cmd cmds[] = {
   { "help", help_cmd },
   { "switch", switch_cmd },
   { "log", log_cmd },
+  { "mconsole-version", mversion_cmd },
   { NULL, default_cmd }
+  /* default_cmd means "send it to the UML" */
 };
 
 /* sends a command */
 int issue_command(int fd, char *command)
 {
   char *ptr;
-  int i;
+  int i = 0;
 
   /* Trim trailing spaces left by readline's filename completion */
   ptr = &command[strlen(command) - 1];
@@ -332,20 +372,20 @@ int issue_command(int fd, char *command)
   for(i = 0; i < sizeof(cmds)/sizeof(cmds[0]); i++){
     if((cmds[i].command == NULL) || 
        !strncmp(cmds[i].command, command, strlen(cmds[i].command))){
-      (*cmds[i].proc)(fd, command);
-      break;
+      return((*cmds[i].proc)(fd, command));
     }
   }
-    
-  /* in future, return command status */
-  return 0;
+
+  /* Should never get here, considering the NULL test above will match the last
+   * entry of cmds */
+  return(0);
 }
 
 /* sends a command in argv style array */
 int issue_commandv(int fd, char **argv)
 {
   char *command;
-  int len, i, status;
+  int len = -1, i = 0, status;
 
   len = 1;  /* space for trailing null */
   for(i = 0; argv[i] != NULL; i++)
@@ -354,7 +394,7 @@ int issue_commandv(int fd, char **argv)
   command = malloc(len);
   if(command == NULL){
     perror("issue_command");
-    return(-1);
+    return(1);
   }
   command[0] = '\0';
 
@@ -367,7 +407,7 @@ int issue_commandv(int fd, char **argv)
 
   free(command);
 
-  return status;
+  return(status);
 }
 
 static void Usage(void)
@@ -401,7 +441,7 @@ int main(int argc, char **argv)
   }
 
   if(argc>2)
-    return issue_commandv(fd, argv+2);
+    exit(issue_commandv(fd, argv+2));
 
   while(1){
     char *command, prompt[1 + sizeof(uml_name) + 2 + 1];
@@ -416,5 +456,5 @@ int main(int argc, char **argv)
     free(command);
   }
   printf("\n");
-  return(0);
+  exit(0);
 }
