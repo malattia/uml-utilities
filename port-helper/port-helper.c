@@ -1,8 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <errno.h>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+
+static void hup(int sig)
+{
+  exit(0);
+}
 
 static void send_fd(int fd, int target)
 {
@@ -37,6 +44,8 @@ static void send_fd(int fd, int target)
 
 int main(int argc, char **argv)
 {
+  signal(SIGHUP, hup);
   send_fd(0, 3);
+  pause();
   return(0);
 }
