@@ -13,16 +13,25 @@
 #include <sys/time.h>
 #include <sys/un.h>
 #include <sys/poll.h>
+#include "switch.h"
+#include "hash.h"
 
-#define ETH_ALEN 6
+#define GC_INTERVAL 2
+#define GC_EXPIRE 100
 
-struct connection {
-  struct connection *next;
-  struct connection *prev;
+#define IS_BROADCAST(addr) ((addr[0] & 1) == 1)
+
+static int hub = 0;
+static int compat_v0 = 0;
+
+struct port {
+  struct port *next;
+  struct port *prev;
   int control;
-  struct sockaddr_un name;
-  unsigned char addr[ETH_ALEN];
+  struct sockaddr_un sock;
 };
+
+static struct port *monitor_port = NULL;
 
 enum request_type { REQ_NEW_CONTROL };
 
@@ -61,10 +70,18 @@ struct reply_v2 {
   struct sockaddr_un sock;
 };
 
+struct request_v3 {
+  unsigned long magic;
+  int version;
+  enum request_type type;
+  struct sockaddr_un sock;
+};
+
 union request {
   struct request_v0 v0;
   struct request_v1 v1;
   struct request_v2 v2;
+  struct request_v3 v3;
 };
 
 struct packet {
@@ -76,7 +93,7 @@ struct packet {
   unsigned char data[1500];
 };
 
-static struct connection *head = NULL;
+static struct port *head = NULL;
 
 static char *ctl_socket = "/tmp/uml.ctl";
 
@@ -144,118 +161,150 @@ static void close_descriptor(int fd)
   close(fd);
 }
 
-static void free_connection(struct connection *conn)
+static void free_port(struct port *port)
 {
-  close_descriptor(conn->control);
-  if(conn->prev) conn->prev->next = conn->next;
-  else head = conn->next;
-  if(conn->next) conn->next->prev = conn->prev;
-  free(conn);
+  close_descriptor(port->control);
+  if(port->prev) port->prev->next = port->next;
+  else head = port->next;
+  if(port->next) port->next->prev = port->prev;
+  free(port);
 }
 
-static void service_connection_v0(struct connection *conn, 
-				  struct request_v0 *req)
-{
-  switch(req->type){
-  default:
-    printf("Bad request type : %d\n", req->type);
-    free_connection(conn);
-  }
-}
-
-static void service_connection_v1(struct connection *conn, 
-				  struct request_v1 *req)
-{
-  switch(req->type){
-  default:
-    printf("Bad request type : %d\n", req->type);
-    free_connection(conn);
-  }
-}
-
-static void service_connection(struct connection *conn)
+static void service_port(struct port *port)
 {
   union request req;
   int n;
 
-  n = read(conn->control, &req, sizeof(req));
+  n = read(port->control, &req, sizeof(req));
   if(n < 0){
     perror("Reading request");
-    free_connection(conn);
+    free_port(port);
     return;
   }
   else if(n == 0){
-    printf("Disconnect from hw address %02x:%02x:%02x:%02x:%02x:%02x\n",
-	   conn->addr[0], conn->addr[1], conn->addr[2], conn->addr[3], 
-	   conn->addr[4], conn->addr[5]);
-    free_connection(conn);
+    printf("Disconnect\n");
+    free_port(port);
     return;
   }
-  if(req.v1.magic == SWITCH_MAGIC) service_connection_v1(conn, &req.v1);
-  else service_connection_v0(conn, &req.v0);
+  printf("Bad request\n");  
+  free_port(port);
 }
 
-static int hub = 0;
-static int compat_v0 = 0;
-
-static int match_addr(unsigned char *host, unsigned char *packet)
+static void update_src(struct port *port, struct packet *p)
 {
-  if(hub) return(1);
-  if(packet[0] & 1) return(1);
-  return((packet[0] == host[0]) && (packet[1] == host[1]) && 
-	 (packet[2] == host[2]) && (packet[3] == host[3]) && 
-	 (packet[4] == host[4]) && (packet[5] == host[5]));
+  struct port *last;
+
+  /* We don't like broadcast source addresses */
+  if(IS_BROADCAST(p->header.src)) return;  
+
+  last = find_in_hash(p->header.src);
+
+  if(port != last){
+    /* old value differs from actual input port */
+
+    printf(" Addr: %02x:%02x:%02x:%02x:%02x:%02x "
+	   " New port %d",
+	   p->header.src[0], p->header.src[1], p->header.src[2],
+	   p->header.src[3], p->header.src[4], p->header.src[5],
+	   port->control);
+
+    if(last != NULL){
+      printf("old port %d", last->control);
+      delete_hash_entry(p->header.src);
+    }
+    printf("\n");
+
+    insert_into_hash(p->header.src, port);
+  }
+  update_entry_time(p->header.src);
+}
+
+static void send_dst(struct port *port, int fd, struct packet *packet, int len)
+{
+  struct port *target, *p;
+
+  target = find_in_hash(packet->header.dest);
+  if((target == NULL) || IS_BROADCAST(packet->header.dest) || hub){
+    if((target == NULL) && !IS_BROADCAST(packet->header.dest)){
+      printf("unknown Addr: %02x:%02x:%02x:%02x:%02x:%02x from port ",
+	     packet->header.src[0], packet->header.src[1], 
+	     packet->header.src[2], packet->header.src[3], 
+	     packet->header.src[4], packet->header.src[5]);
+      if(port == NULL) printf("UNKNOWN\n");
+      else printf("%d\n", port->control);
+    } 
+
+    /* no cache or broadcast/multicast == all ports */
+    for(p = head; p != NULL; p = p->next){
+      /* don't send it back the port it came in */
+      if(p == port) continue;
+
+      sendto(fd, packet, len, 0, (struct sockaddr *) &p->sock, 
+	     sizeof(p->sock));
+    }
+  }
+  else {
+    sendto(fd, packet, len, 0, (struct sockaddr *) &target->sock, 
+	   sizeof(target->sock));
+    if((monitor_port != NULL) && (port != monitor_port) && 
+       (target != monitor_port))
+      sendto(fd, packet, len, 0, (struct sockaddr *) &monitor_port->sock, 
+	     sizeof(monitor_port->sock));
+  }
 }
 
 static void handle_data(int fd)
 {
-  struct packet p;
-  struct connection *c, *next;
-  int len;
+  struct packet packet;
+  struct port *p;
+  struct sockaddr_un source;
+  int len, socklen;
 
-  len = recvfrom(fd, &p, sizeof(p), 0, NULL, 0);
+  len = recvfrom(fd, &packet, sizeof(packet), 0, (struct sockaddr *) &source,
+		 &socklen);
   if(len < 0){
     if(errno != EAGAIN) perror("Reading data");
     return;
   }
-  for(c = head; c != NULL; c = next){
-    next = c->next;
-    if(match_addr(c->addr, p.header.dest)){
-      sendto(fd, &p, len, 0, (struct sockaddr *) &c->name, sizeof(c->name));
-    }
+
+  for(p = head; p != NULL; p = p->next){
+    if(!memcmp(p->sock.sun_path, source.sun_path, sizeof(source.sun_path) - 1))
+      break;
   }
+  
+  /* if we have an incoming port (we should) */
+  if(p != NULL) update_src(p, &packet);
+  else printf("Unknown connection for packet, shouldnt happen.\n");
+
+  send_dst(p, fd, &packet, len);  
 }
 
-static struct connection * setup_connection(int fd, unsigned char *mac, 
-					    struct sockaddr_un *name)
+static struct port *setup_port(int fd, struct sockaddr_un *name)
 {
-  struct connection *conn;
+  struct port *port;
 
-  conn = malloc(sizeof(struct connection));
-  if(conn == NULL){
+  port = malloc(sizeof(struct port));
+  if(port == NULL){
     perror("malloc");
     close_descriptor(fd);
     return(NULL);
   }
-  conn->next = head;
-  if(head) head->prev = conn;
-  conn->prev = NULL;
-  conn->control = fd;
-  memcpy(conn->addr, mac, sizeof(conn->addr));
-  conn->name = *name;
-  head = conn;
-  printf("New connection - hw address %02x:%02x:%02x:%02x:%02x:%02x\n",
-	 conn->addr[0], conn->addr[1], conn->addr[2], conn->addr[3], 
-	 conn->addr[4], conn->addr[5]);
-  return(conn);
+  port->next = head;
+  if(head) head->prev = port;
+  port->prev = NULL;
+  port->control = fd;
+  port->sock = *name;
+  head = port;
+  printf("New connection\n");
+  return(port);
 }
 
-static void new_connection_v0(int fd, struct connection *conn, 
+static void new_port_v0(int fd, struct port *conn, 
 			      struct request_v0 *req)
 {
   switch(req->type){
   case REQ_NEW_CONTROL:
-    setup_connection(fd, req->u.new_control.addr, &req->u.new_control.name);
+    setup_port(fd, &req->u.new_control.name);
     break;
   default:
     printf("Bad request type : %d\n", req->type);
@@ -263,25 +312,24 @@ static void new_connection_v0(int fd, struct connection *conn,
   }
 }
 
-static void new_connection_v1(int fd, struct connection *conn, 
-			      struct request_v1 *req)
+static void new_port_v1_v3(int fd, struct port *port, enum request_type type, 
+			   struct sockaddr_un *sock)
 {
-  struct connection *new;
+  struct port *new;
   int n;
 
-  switch(req->type){
+  switch(type){
   case REQ_NEW_CONTROL:
-    new = setup_connection(fd, req->u.new_control.addr, 
-			   &req->u.new_control.name);
+    new = setup_port(fd, sock);
     if(new == NULL) return;
     n = write(fd, &data_sun, sizeof(data_sun));
     if(n != sizeof(data_sun)){
       perror("Sending data socket name");
-      free_connection(new);
+      free_port(new);
     }
     break;
   default:
-    printf("Bad request type : %d\n", req->type);
+    printf("Bad request type : %d\n", type);
     close_descriptor(fd);
   }
 }
@@ -290,10 +338,9 @@ static unsigned long start_range = 0;
 static unsigned long end_range = 0xfffffffe;
 static unsigned long current = 0;
 
-static void new_connection_v2(int fd, struct connection *conn, 
-			      struct request_v2 *req)
+static void new_port_v2(int fd, struct port *port, struct request_v2 *req)
 {
-  struct connection *new;
+  struct port *new;
   struct reply_v2 reply;
   int n;
 
@@ -310,13 +357,13 @@ static void new_connection_v2(int fd, struct connection *conn,
     reply.mac[3] = (current >> 16) & 0xff;
     reply.mac[4] = (current >> 8) & 0xff;
     reply.mac[5] = current & 0xff;
-    new = setup_connection(fd, reply.mac, &req->sock);
+    new = setup_port(fd, &req->sock);
     if(new == NULL) return;
     reply.sock = data_sun;
     n = write(fd, &reply, sizeof(reply));
     if(n != sizeof(reply)){
       perror("Sending reply");
-      free_connection(new);
+      free_port(new);
     }
     current++;
     break;
@@ -326,10 +373,10 @@ static void new_connection_v2(int fd, struct connection *conn,
   }
 }
 
-static void new_connection(int fd)
+static void new_port(int fd)
 {
   union request req;
-  struct connection *conn;
+  struct port *port;
   int len;
 
   len = read(fd, &req, sizeof(req));
@@ -341,31 +388,33 @@ static void new_connection(int fd)
     return;
   }
   else if(len == 0){
-    printf("EOF from new connection\n");
+    printf("EOF from new port\n");
     close_descriptor(fd);
     return;
   }
   if(req.v1.magic == SWITCH_MAGIC){
-    if(req.v2.version == 2) new_connection_v2(fd, conn, &req.v2);
+    if(req.v2.version == 2) new_port_v2(fd, port, &req.v2);
+    if(req.v3.version == 3) 
+      new_port_v1_v3(fd, port, req.v3.type, &req.v3.sock);
     else if(req.v2.version > 2) 
-      fprintf(stderr, "Request for a version %d connection, which this "
+      fprintf(stderr, "Request for a version %d port, which this "
 	      "uml_switch doesn't support\n", req.v2.version);
-    else new_connection_v1(fd, conn, &req.v1);
+    else new_port_v1_v3(fd, port, req.v1.type, &req.v1.u.new_control.name);
   }
-  else new_connection_v0(fd, conn, &req.v0);
+  else new_port_v0(fd, port, &req.v0);
 }
 
-void handle_connection(int fd)
+void handle_port(int fd)
 {
-  struct connection *c;
+  struct port *p;
 
-  for(c = head; c != NULL; c = c->next){
-    if(c->control == fd){
-      service_connection(c);
+  for(p = head; p != NULL; p = p->next){
+    if(p->control == fd){
+      service_port(p);
       break;
     }
   }
-  if(c == NULL) new_connection(fd);
+  if(p == NULL) new_port(fd);
 }
 
 void accept_connection(int fd)
@@ -657,7 +706,7 @@ int main(int argc, char **argv)
 	accept_connection(connect_fd);
       }
       else if(fds[i].fd == data_fd) handle_data(data_fd);
-      else handle_connection(fds[i].fd);
+      else handle_port(fds[i].fd);
     }
   }
  out:

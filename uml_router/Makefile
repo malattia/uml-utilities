@@ -1,4 +1,4 @@
-OBJS = uml_switch.o
+OBJS = uml_switch.o hash.o
 BIN = uml_switch
 CFLAGS = -g -Wall
 
