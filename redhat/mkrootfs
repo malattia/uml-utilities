@@ -1,134 +1,143 @@
 #!/bin/bash
+#Copyright 1999-2000 Jeff Dike <jdike@karaya.com> and William
+#Stearns <wstearns@pobox.com>.  GPL'd; see the GPL for more info.
 
-function rpm_file()
-{
-    local name=$1
-    set $RPMDIR/$1[-0-9.i]*.rpm
-    if [ $# -ne 1 ]
-    then
-	echo
-	echo Found too many rpms for \"$name\" 1>&2
-	exit 1
-    elif [ ! -f $1 ]
-    then
-	echo
-	echo Found no rpms for \"$name\" 1>&2
-	exit 1
-    fi
-    echo $1
-}
+DIST=${1:-rh62}
 
-function get_data()
-{
-    local prompt=$1
-    local default=$2
-    local verify=$3
-    local answer=""
-    local err_msg
+# This is the file containing the filesystem.  You probably shouldn't change
+# it since the kernel has this name hard-wired.
+FSFILE=${FSFILE:-root_fs}
 
-    while true; do
-        echo -n "$prompt [$default]: " 1>&2
-        read answer
-        [ "$answer" = "" ] && answer=$default
-	[ $verify != "" ] && err_msg=`$verify $answer` && break
-	[ "$err_msg" != "" ] && echo -e $err_msg 1>&2
-    done
-    echo $answer
-}
+SWAPMEGS=${SWAPMEGS:-126}
 
-function verify_yn()
-{
-    local answer=$1
-    local res=true
+# This is a temporary mount point which will be used to mount the new
+# filesystem while it's being built.
+MNTDIR=${MNTDIR:-mnt}
 
-    echo "Please answer 'y' or 'n'"
-    [ "$1" = "y" ] || [ "$1" = "n" ]
-}
+# Change this if your distribution is located someplace else
+if [ -z "$RPMDIR" ]; then
+    RPMDIR=/usr/src/${DIST}source
+fi
 
-function verify_fs()
-{
-    local file=$1;
-    local res=true
-    local ok="y"
+#This needs to be a (dist-specific) file in a writable directory.  It will
+#be created automatically if it doesn't exit.
+if [ -z "$RPMPROVIDES" ]; then
+    RPMPROVIDES=`pwd`/${DIST}.provides
+fi
 
-    if [ -b "$file" ]
-    then
-	ok=`get_data "\"$file\" is a block device - confirm that you want to install into it" y verify_yn`
-    elif [ -d "$file" ]
-    then
-	ok=`get_data "\"$file\" is a directory - confirm that you want to install into it" y verify_yn`
-    elif [ -f "$file" ]
-    then
-	ok=`get_data "\"$file\" already exists - OK to delete it" y verify_yn`
-    elif [ -e $file ]
-    then
-	ok=`get_data "\"$file\" is not a plain file - OK to delete it" y \
-	    verify_yn`
-    fi
-    [ "$ok" = "y" ]
-}
+#You have three ways to specify the size of the root filesystem.  The 
+#actual size will be the largest of any you specify, or 100M if you
+#don't specify any.
+#FSMEGS: an actual size in Megs of the filesystem.
+#FSFREEPCT: In addition to the amount of space used, this percentage over
+#the used space must be free.  If 100M is used by the dist and FSFREEPCT
+#is 15, you'll have a root filesystem of at least 115M.
+#FSFREEMEGS: In addition to the amount of space used, this absolute number
+#of megabytes must be free.  Again, if 100M used by dist and FSFREEMEGS
+#is 30, the root filesystem will be at least 130M.
+#I'd suggest setting FSFREEPCT to 20 (or something between 30 and 100 if you
+#know you'll be adding a lot of stuff) and leaving the rest unset.
+#FSMEGS="100"
+#FSFREEPCT="15"
+#FSFREEMEGS="30"
 
-function verify_size()
-{
-    local size=$1
-    local err=""
-    local space=`df \`dirname $FSFILE\` | tail -1 | awk '{print $4}'`
-    space=$(( $space / 1024 ))
-    local mnt=`df \`dirname $FSFILE\` | tail -1 | awk '{print $6}'`
+FSMEGS=300
+FSFREEPCT=20
 
-    if [ `expr "$size" : '[0-9]*'` -ne `expr length "$size"` ]
-    then
-	err="The size must be a number, containing only digits"
-    elif [ "$size" -lt 100 ]
-    then
-	err="The size should be at least 100"
-    elif [ $space -lt "$size" ]
-    then
-	err="There is not enough free space in $mnt (available space : \
-$space M)"
-    fi
-    echo $err
-    [ "$err" = "" ]
-}
+RPMS=" $RPMS bdflush- dev- mount- SysVinit- net-tools- quota- findutils- tcp_wrappers- \
+bind-utils- uml-net-tools- devfsd- iptables- sysklogd- vixie-cron- binutils- \
+util-linux- gzip- iputils- "						#Base
+RPMS=" $RPMS lynx- mc- tcpdump- strace- traceroute- less- man- info- passwd- \
+diffutils- console-tools- rpm- vim-minimal- vim- vim-enhanced- telnet- netkit-ftp- \
+ftp- openssh-clients- ssh- ircii- "					#Client
 
-function verify_mnt()
-{
-    local dir=$1
-    local err=""
+RPMS=" $RPMS cpp- egcs- gcc- "						#Development
 
-    if [ ! -d "$dir" ]
-    then
-	err="$dir is not a directory"
-    elif [ ! -d "$dir/RedHat/RPMS" ]
-    then
-	err="$dir seems not to be a Red Hat distribution ($dir/RedHat/RPMS \n\
-doesn't exist or isn't a directory)"
-    fi
-    echo $err
-    [ "$err" = "" ]
-}
+#Common Servers
+RPMS=" $RPMS xinetd- inetd- netkit-base-"				#Inetd
+RPMS=" $RPMS apache- "							#Apache/httpd
+RPMS=" $RPMS bind- caching-nameserver- "				#Bind/named
+RPMS=" $RPMS imap- sendmail- "	 					#Email server
+RPMS=" $RPMS inn- "							#News Server
+RPMS=" $RPMS linuxconf- "						#Linuxconf web configuration - has to be enabled.
+RPMS=" $RPMS pidentd- "							#Ident server
+RPMS=" $RPMS portmap- "
+RPMS=" $RPMS squid- "
+RPMS=" $RPMS samba- "
+RPMS=" $RPMS telnet-server- netkit-telnet- openssh-server- ssh-server- "	#Telnet/ssh
+RPMS=" $RPMS ucd-snmp- "
+RPMS=" $RPMS wu-ftpd- anonftp- "					#FTP
 
-function verify_sudo()
-{
-    local sudo=$1
-    local err=""
+#Common X
+RPMS=" $RPMS fvwm2- "							#fvwm2
+RPMS=" $RPMS enlightenment- "						#enlightenment
+RPMS=" $RPMS chkfontpath- XFree86-75dpi-fonts- XFree86-100dpi-fonts- \
+XFree86-Xnest- xsysinfo- xosview- XFree86-tools- X11R6-contrib- "	#X Client
+RPMS=" $RPMS gnome-core- "						#gnome
+RPMS=" $RPMS gdm- "							#gdm
 
-    if [ "$sudo" = "" ]
-    then err=""
-    elif [ ! -f "$sudo" ] || [ ! -x "$sudo" ] || [ ! -u "$sudo" ]
-    then
-	err="\"$sudo\" is not an setuid root executable file"
-    fi
-    echo $err
-    [ "$err" = "" ]
-}
+case $DIST in
+rh62|im62)	#Redhat 6.2, Immunix 6.2
+#    RPMS=" readline- $RPMS "
+#    RPMS=" $RPMS **perl- "		#Client
 
-FSFILE=root_fs
-FSMEGS=100
-CDDIR=/mnt/cdrom
+    #Warning! - hardcoded list for testing!
+    RPMS=" /usr/src/rh62source/setup-2.1.8-1.noarch.rpm /usr/src/rh62source/filesystem-1.3.5-1.noarch.rpm /usr/src/rh62source/basesystem-6.0-4.noarch.rpm /usr/src/rh62source/ldconfig-1.9.5-16.i386.rpm /usr/src/rh62source/glibc-2.1.3-21.i386.rpm /usr/src/rh62source/mktemp-1.5-2.i386.rpm /usr/src/rh62source/termcap-10.2.7-9.noarch.rpm /usr/src/rh62source/bash-1.14.7-22.i386.rpm#/usr/src/rh62source/libtermcap-2.0.8-20.i386.rpm /usr/src/rh62source/bdflush-1.5-11.i386.rpm /usr/src/rh62source/shadow-utils-19990827-10.i386.rpm /usr/src/rh62source/ncurses-5.0-11.i386.rpm /usr/src/rh62source/info-4.0-5.i386.rpm /usr/src/rh62source/grep-2.4-3.i386.rpm /usr/src/rh62source/sed-3.02-6.i386.rpm /usr/src/rh62source/fileutils-4.0-21.i386.rpm /usr/src/rh62source/textutils-2.0e-6.i386.rpm /usr/src/rh62source/dev-2.7.18-3.i386.rpm /usr/src/rh62source/gawk-3.0.4-2.i386.rpm /usr/src/rh62source/diffutils-2.7-17.i386.rpm /usr/src/rh62source/mount-2.10f-1.i386.rpm /usr/src/rh62source/cracklib-2.7-5.i386.rpm /usr/src/rh62source/cracklib-dicts-2.7-5.i386.rpm /usr/src/rh62source/pwdb-0.61-0.i386.rpm /usr/src/rh62source/mingetty-0.9.4-11.i386.rpm /usr/src/rh62source/e2fsprogs-1.18-5.i386.rpm /usr/src/rh62source/chkconfig-1.1.2-1.i386.rpm /usr/src/rh62source/console-tools-19990829-10.i386.rpm /usr/src/rh62source/procps-2.0.6-5.i386.rpm /usr/src/rh62source/popt-1.5-9.6x.i386.rpm /usr/src/rh62source/logrotate-3.3.2-1.i386.rpm /usr/src/rh62source/sysklogd-1.3.31-16.i386.rpm /usr/src/rh62source/psmisc-19-2.i386.rpm /usr/src/rh62source/which-2.9-2.i386.rpm /usr/src/rh62source/vixie-cron-3.0.1-40.i386.rpm /usr/src/rh62source/modutils-2.3.13-1.i386.rpm /usr/src/rh62source/initscripts-5.39-1.i386.rpm /usr/src/rh62source/glib-1.2.6-3.i386.rpm /usr/src/rh62source/pam-0.72-20.i386.rpm /usr/src/rh62source/SysVinit-2.78-5.i386.rpm /usr/src/rh62source/net-tools-1.54-4.i386.rpm /usr/src/rh62source/quota-2.00pre3-2.i386.rpm /usr/src/rh62source/findutils-4.1-34.i386.rpm /usr/src/rh62source/tcp_wrappers-7.6-10.i386.rpm /usr/src/rh62source/bind-utils-8.2.2_P5-9.i386.rpm /usr/src/rh62source/uml-net-tools-0.005-0.i386.rpm /usr/src/rh62source/devfsd-1.3.10-1.i386.rpm /usr/src/rh62source/iptables-1.1.1-0.i386.rpm /usr/src/rh62source/binutils-2.9.5.0.22-6.i386.rpm /usr/src/rh62source/kernel-2.2.16-3.i386.rpm /usr/src/rh62source/slang-1.2.2-5.i386.rpm /usr/src/rh62source/util-linux-2.10f-7.i386.rpm /usr/src/rh62source/gzip-1.2.4a-2.i586.rpm /usr/src/rh62source/iputils-20000121-2.i386.rpm /usr/src/rh62source/indexhtml-6.2-1.noarch.rpm /usr/src/rh62source/zlib-1.1.3-6.i386.rpm /usr/src/rh62source/lynx-2.8.3-2.i386.rpm /usr/src/rh62source/gpm-1.19.3-0.6.x.i386.rpm /usr/src/rh62source/tcsh-6.09-4.i386.rpm /usr/src/rh62source/gdbm-1.8.0-3.i386.rpm /usr/src/rh62source/perl-5.00503-12.i386.rpm /usr/src/rh62source/mc-4.5.42-10.i386.rpm /usr/src/rh62source/tcpdump-3.4-19.i386.rpm /usr/src/rh62source/strace-4.2-1.i386.rpm /usr/src/rh62source/traceroute-1.4a5-18.i386.rpm /usr/src/rh62source/less-346-2.i386.rpm /usr/src/rh62source/cpp-1.1.2-30.i386.rpm /usr/src/rh62source/kernel-headers-2.2.16-3.i386.rpm /usr/src/rh62source/glibc-devel-2.1.3-21.i386.rpm /usr/src/rh62source/egcs-1.1.2-30.i386.rpm /usr/src/rh62source/libstdc++-2.9.0-30.i386.rpm /usr/src/rh62source/egcs-c++-1.1.2-30.i386.rpm /usr/src/rh62source/groff-1.15-8.i386.rpm /usr/src/rh62source/man-1.5h1-2.6.x.i386.rpm /usr/src/rh62source/bzip2-0.9.5d-2.i386.rpm /usr/src/rh62source/passwd-0.64.1-1.i386.rpm /usr/src/rh62source/sh-utils-2.0-5.i386.rpm /usr/src/rh62source/rpm-3.0.5-9.6x.i386.rpm /usr/src/rh62source/vim-common-5.6-11.i386.rpm /usr/src/rh62source/vim-minimal-5.6-11.i386.rpm /usr/src/rh62source/vim-enhanced-5.6-11.i386.rpm /usr/src/rh62source/telnet-0.16-6.i386.rpm /usr/src/rh62source/readline-2.2.1-6.i386.rpm /usr/src/rh62source/ftp-0.16-3.i386.rpm /usr/src/rh62source/ssh-1.2.27-1.i386.rpm /usr/src/rh62source/ircii-4.4M-1.i386.rpm /usr/src/rh62source/inetd-0.16-4.i386.rpm /usr/src/rh62source/mailcap-2.0.6-1.noarch.rpm /usr/src/rh62source/apache-1.3.12-2.i386.rpm /usr/src/rh62source/bind-8.2.2_P5-9.i386.rpm /usr/src/rh62source/caching-nameserver-6.2-2.noarch.rpm /usr/src/rh62source/krb5-configs-1.1.1-21.i386.rpm /usr/src/rh62source/krb5-libs-1.1.1-21.i386.rpm /usr/src/rh62source/imap-4.7-5.i386.rpm /usr/src/rh62source/sendmail-8.9.3-20.i386.rpm /usr/src/rh62source/cleanfeed-0.95.7b-7.noarch.rpm /usr/src/rh62source/inn-2.2.2-3.i386.rpm /usr/src/rh62source/redhat-release-6.2-1.noarch.rpm /usr/src/rh62source/gd-1.3-6.i386.rpm /usr/src/rh62source/linuxconf-1.17r2-6.i386.rpm /usr/src/rh62source/pidentd-3.0.10-5.i386.rpm /usr/src/rh62source/portmap-4.0-19.i386.rpm /usr/src/rh62source/squid-2.3.STABLE1-5.i386.rpm /usr/src/rh62source/samba-common-2.0.7-4.i386.rpm /usr/src/rh62source/samba-2.0.7-4.i386.rpm /usr/src/rh62source/telnet-server-0.16-6.i386.rpm /usr/src/rh62source/ssh-server-1.2.27-1.i386.rpm /usr/src/rh62source/ucd-snmp-4.1.1-2.i386.rpm /usr/src/rh62source/wu-ftpd-2.6.0-14.6x.i386.rpm /usr/src/rh62source/anonftp-3.0-3.i386.rpm /usr/src/rh62source/fvwm2-icons-2.2.4-4.i386.rpm /usr/src/rh62source/audiofile-0.1.9-3.i386.rpm /usr/src/rh62source/esound-0.2.17-2.i386.rpm /usr/src/rh62source/XFree86-libs-3.3.6-20.i386.rpm /usr/src/rh62source/gtk+-1.2.6-7.i386.rpm /usr/src/rh62source/gnome-audio-1.0.0-8.noarch.rpm /usr/src/rh62source/utempter-0.5.2-2.i386.rpm /usr/src/rh62source/ORBit-0.5.0-3.i386.rpm /usr/src/rh62source/libpng-1.0.5-3.i386.rpm /usr/src/rh62source/libjpeg-6b-10.i386.rpm /usr/src/rh62source/libtiff-3.5.5-2.i386.rpm /usr/src/rh62source/libgr-2.0.13-23.i386.rpm /usr/src/rh62source/libgr-progs-2.0.13-23.i386.rpm /usr/src/rh62source/libungif-4.1.0-4.i386.rpm /usr/src/rh62source/imlib-1.9.7-3.i386.rpm /usr/src/rh62source/xpm-3.4k-2.i386.rpm /usr/src/rh62source/gnome-libs-1.0.55-12.i386.rpm /usr/src/rh62source/wmconfig-0.9.8-1.i386.rpm /usr/src/rh62source/fvwm2-2.2.4-4.i386.rpm /usr/src/rh62source/fnlib-0.4-10.i386.rpm /usr/src/rh62source/freetype-1.3.1-5.i386.rpm /usr/src/rh62source/enlightenment-0.15.5-48.i386.rpm /usr/src/rh62source/XFree86-xfs-3.3.6-20.i386.rpm /usr/src/rh62source/chkfontpath-1.7-2.i386.rpm /usr/src/rh62source/XFree86-75dpi-fonts-3.3.6-20.i386.rpm /usr/src/rh62source/XFree86-100dpi-fonts-3.3.6-20.i386.rpm /usr/src/rh62source/XFree86-Xnest-3.3.6-20.i386.rpm /usr/src/rh62source/xsysinfo-1.7-1.i386.rpm /usr/src/rh62source/xosview-1.7.1-4.i386.rpm /usr/src/rh62source/X11R6-contrib-3.3.2-11.i386.rpm /usr/src/rh62source/xloadimage-4.1-13.i386.rpm /usr/src/rh62source/fortune-mod-1.0-11.i386.rpm /usr/src/rh62source/XFree86-3.3.6-20.i386.rpm /usr/src/rh62source/Mesa-3.2-2.i686.rpm /usr/src/rh62source/xscreensaver-3.23-2.i386.rpm /usr/src/rh62source/redhat-logos-1.1.0-2.noarch.rpm /usr/src/rh62source/control-center-1.0.51-3.i386.rpm /usr/src/rh62source/libxml-1.8.6-2.i386.rpm /usr/src/rh62source/libglade-0.11-1.i386.rpm /usr/src/rh62source/magicdev-0.2.7-1.i386.rpm /usr/src/rh62source/libgtop-1.0.6-1.i386.rpm /usr/src/rh62source/gnome-core-1.0.55-12.i386.rpm /usr/src/rh62source/gdm-2.0beta2-26.i386.rpm "
+    :
+    ;;
+ca24)		#Caldera OpenLinux 2.4
+#    RPMS=" setup- termcap- tcsh-#sed-#sh-utils-#fileutils- grep- \
+#    gawk- textutils- procps- modutils- ext2fs- popt- crontabs- \
+#    logrotate- psmisc- which- slang- readline- bzip2- mailcap- \
+#    $RPMS pam-apps- OpenLinux- adduser- shadow-misc- bool- "
+#    RPMS=" $RPMS gpm- libstdc++- "					#Client
+#    RPMS=" $RPMS XFree86-config- XFree86-fontserver- utempter- $RPMDIR/XFree86-3.3.6-3.i386.rpm **xpm- "	#X
+#    RPMS=" $RPMS **xscreensaver- "					#gnome
+    :
+    ;;
+co51)		#Connectiva 5.1
+#    #initscripts fails to Require: gettext
+#    RPMS=" setup- filesystem- basesystem- gettext- popt- logrotate- \
+#    which- slang- sh-utils- $RPMS "
+#    RPMS=" $RPMS gpm- indexhtml- "					#Client
+#    RPMS=" $RPMS XFree86-xfs- Mesa- $RPMDIR/XFree86-3.3.6-15cl.i386.rpm **xpm- "	#X
+    :
+    ;;
+md71)		#Mandrake 7.1
+#    RPMS=" filesystem- gdbm- perl- newt- ntsysv- tmpwatch- crontabs- etcskel- \
+#    getty_ps- hdparm- losetup- procmail- rootfiles- sash- ash- setserial- stat- rmt- tar- time- \
+#    lilo- grub- mkinitrd- cpio- mkbootdisk- isapnptools- basesystem- mailcap- $RPMS "
+#    RPMS=" $RPMS indexhtml- "						#Client
+#    RPMS=" $RPMS Mesa-common- svgalib- Mesa- "				#X
+    :
+    ;;
+rh70)		#RedHat 7.0
+#    RPMS=" slang- $RPMS "
+    :
+    ;;
+*)
+    echo Unknown distribution $DIST
+    exit
+    ;;
+esac
 
-if [ `whoami` = root ]
-then
+# $RPMDIR/gzip-1.2.4a-2.i586.rpm if source dir has two gzip rpms
+
+#I think we have to pass on lpr.  Skipping cvs/rcs, postgresql, rsh, 
+#rsync, rwall, rwho, talks, tftp, times, uucp, yp, syslog port
+
+. ./functions
+#addline() #Params: $1 File that needs the additional line, $2 line to add.
+#bitstomask()
+#broadcastof()
+#delline() #Params: $1 File that needs the line removed, $2 line to remove (may be a partial line).
+#networkof()
+#rpm_params()
+#rpm_file()
+#substline() #Params: $1 File that needs the additional line, $2 string to look for, $3 string with which it should be replaced.
+#and others...
+
+if [ `whoami` = root ]; then
     SUDO=""
 else 
     SUDO=`which sudo`
@@ -139,56 +148,122 @@ You need to have sudo installed or you need to run this script as root && \
     [ "$SUDO" = "" ] && exit 1
 fi
 
-while true; do
+RPMS=" $RPMS "
+if ! echo "$RPMS" | grep -q "[# /]bash-[# 1-9]" ; then
+    echo Adding missing bash to the list.
+    RPMS=" bash- $RPMS "
+fi
+if ! echo "$RPMS" | grep -q "[# /]glibc-[# 1-9]" ; then	#Yes, I know there are distributions w/o glibc.  Case later.
+    echo Adding missing glibc to the list.
+    RPMS=" glibc- $RPMS "
+fi
 
-FSFILE=`get_data "File that the new filesystem should be built in" \
-    $FSFILE verify_fs`
+echo Add rpm dependencies.
+if [ -d rpmdeptree ]; then
+    $SUDO rm -rf ./rpmdeptree
+elif [ -e rpmdeptree ]; then
+    echo rpmdeptree exists, ugh, exiting.
+    exit 1
+fi
 
-[ ! -d $FSFILE ] && [ ! -b $FSFILE ] &&
-    FSMEGS=`get_data "Size of the filesystem in megabytes" $FSMEGS verify_size`
+$SUDO mkdir rpmdeptree
+#Warn that a kernel param/modload param needed for >4M ramdisks.
+#append ramdisk_size=13288
+#options rd rd_size=13288
+#or set in kernel configuration.
+#to /etc/conf.modules (yes, at boot uses "ramdisk_size" and module 
+#uses "rd_size" -- sigh)  But it does indeed work -- e.g:
+$SUDO umount -f rpmdeptree 2>/dev/null
+$SUDO mke2fs -m0 /dev/ram0
+$SUDO mount -t ext2 /dev/ram0 rpmdeptree
+#ZZZZ - check for drivespace, unmount if too little
 
-CDDIR=`get_data "Mount point of your RH distribution" $CDDIR verify_mnt`
+cd rpmdeptree
+CURRENTDIR=`pwd`
+RPMS="`rpm_add_deps $RPMS`"
+cd ..
+if [ -d rpmdeptree ]; then
+    $SUDO rm -rf ./rpmdeptree/*
+else
+    echo rpmdeptree isn\'t a directory, ugh.  exiting.
+    exit 1
+fi
+$SUDO umount rpmdeptree 2>/dev/null
 
-echo
-echo The root filesystem will be built in \"$FSFILE\"
-[ ! -d $FSFILE ] && [ ! -b $FSFILE ] &&
-    echo It will be "$FSMEGS"M in size
-echo Your Red Hat distribution is mounted at \"$CDDIR\"
-echo
-OK=`get_data "Is this information correct" y verify_yn`
-[ $OK = 'y' ] && break;
+#echo press enter to continue ; read JUNK
 
+NUMRPMS=0
+TOTALSPACE=0
+for ONERPM in `echo $RPMS | sed -e 's/#/ /g'` ; do
+    NUMRPMS=$[ $NUMRPMS + 1 ]
+    TOTALSPACE=$[ $TOTALSPACE + `rpm --queryformat '%{SIZE}' -qp $ONERPM` ]
 done
+echo -n There are $TOTALSPACE bytes \(
+TOTALSPACE=$[ $TOTALSPACE / 1024 / 1024 ]	#Convert TOTALSPACE to Megabytes
+echo $TOTALSPACE M\) of space used by $NUMRPMS rpms. 
 
-RPMDIR=$CDDIR/RedHat/RPMS
+SIZES="100"
+if [ -n "$FSMEGS" ]; then
+    echo FS needs to be at least $FSMEGS.
+    SIZES="$SIZES $FSMEGS"
+fi
+if [ -n "$FSFREEPCT" ]; then
+    echo FS needs to have at least $FSFREEPCT percent free additional free space= $[ ( $TOTALSPACE * (100 + $FSFREEPCT + 5)) / 100 ] M.
+    SIZES="$SIZES $[ ( $TOTALSPACE * (100 + $FSFREEPCT + 5)) / 100 ]"	#5% here and below accounts for root-owned space.
+fi
+if [ -n "$FSFREEMEGS" ]; then
+    echo FS needs to have at least $FSFREEMEGS free additional free space.
+    SIZES="$SIZES $[ $FSFREEMEGS * 1.05 ]"
+fi
 
-# These are to get bash off the ground.  You probably shouldn't change them.
-BASH_RPMS="filesystem- ldconfig- glibc- libtermcap- bash- util-linux- "
+ACTUALFSSIZE=`max $SIZES`
+echo Using $ACTUALFSSIZE for the root filesystem.
 
-# These are all the others.  Add new rpms to this list if you want more stuff
-# in your filesystem.
-REST="bdflush- fileutils- grep- mingetty- mktemp- gawk- diffutils- textutils- \
-    mount- net-tools- shadow-utils- chkconfig- procps- sed- vixie-cron- \
-    modutils- e2fsprogs- popt- logrotate- sysklogd- console-tools- which- \
-    psmisc- initscripts- quota- slang- pwdb- cracklib- cracklib-dicts- \
-    compat-glibc- glib- pam- sh-utils- netkit-base- passwd-\
-    SysVinit- tcp_wrappers- tcsh- gdbm- perl-5.00503- telnet- readline- \
-    readline-devel- ftp- wu-ftpd- indexhtml- zlib- lynx- findutils- dev-"
+#echo press enter to continue ; read JUNK
+
+#No longer needed
+#echo Packing up manual changes...
+#if [ -d initfiles ]; then
+#    cd initfiles
+#    rm -f ../initfiles.tar
+#    tar -cvf ../initfiles.tar *
+#    cd ..
+#fi
+
+if [ -f swap ] || [ -f swap.old ]; then
+    echo Moving old swapspace out of the way...
+    if [ -f swap.old ]; then		rm -f swap.old ;		fi
+    if [ -f swap ]; then		mv -f swap swap.old ;		fi
+fi
+
+echo Creating an empty swapfile...
+dd if=/dev/zero of=swap bs=$((1024 * 1024)) count=0 seek=$SWAPMEGS || exit 1	#Make a completely sparse file to start with; use "count=$SWAPMEGS", no seek if you'd rather not.
+
+echo Making swap space in it...
+$SUDO mkswap swap || exit 1
+
+#echo Making swap sparse...		#If the swap space is to be used for uml, this actually works!
+#cp -pf --sparse=always swap swap.sparse
+#mv -f swap.sparse swap
 
 if [ -d $FSFILE ]
 then
     MNTDIR=$FSFILE
 else
     MNTDIR=mnt
-    if [ ! -b $FSFILE ]
-    then
-        rm -rf $FSFILE
+    if [ ! -b $FSFILE ]; then
+	if [ -f $FSFILE ] || [ -f $FSFILE.old ]; then
+	    echo Moving old root filesystem out of the way...
+	    if [ -f $FSFILE.old ]; then		rm -f $FSFILE.old ;		fi
+	    if [ -f $FSFILE ]; then		mv -f $FSFILE $FSFILE.old ;	fi
+	fi
+
 	echo Creating \"$FSFILE\" as an empty file...
-	dd if=/dev/zero of=$FSFILE bs=$((1024 * 1024)) count=$FSMEGS || exit 1
+	dd if=/dev/zero of=$FSFILE bs=$((1024 * 1024)) count=0 seek=$ACTUALFSSIZE || exit 1	#Make a completely sparse file to start with; use "count=$ACTUALFSSIZE", no seek if you'd rather not.
     fi
 
     [ "$SUDO" != "" ] && \
-    echo Privileged operation - you may need to type your root passwork at sudo
+    echo Privileged operation - you may need to type your root password at sudo
 
     echo Making a file system in it...
     $SUDO mke2fs -F $FSFILE || exit 1
@@ -196,57 +271,646 @@ else
     echo Mounting it on $MNTDIR
     [ ! -d $MNTDIR ] && mkdir $MNTDIR
     [ ! -b $FSFILE ] && LOOP="-o loop"
+    $SUDO umount $MNTDIR >/dev/null 2>&1 || /bin/true
     $SUDO mount $LOOP $FSFILE $MNTDIR || exit 1
 fi
-
 cd $MNTDIR
+
+if [ `ls -A1 $RPMDIR/*.cgz 2>/dev/null | wc -l` -gt 0 ]; then
+    echo Opening up Base files.		#Caldera's fsstnd.cgz and skeleton.cgz
+    for ONEBASE in $RPMDIR/*.cgz ; do
+        cat $ONEBASE | gunzip - | $SUDO cpio -idm --no-absolute-filenames
+    done
+fi
 
 $SUDO mkdir -p var/lib/rpm/ || exit 1
 $SUDO mkdir -p var/tmp/ || exit 1
+$SUDO mkdir -p dev || exit 1
+$SUDO mknod -m 666 dev/null c 1 3	#What nitwit redirects to /dev/null in the _preinstall_ script for dev-?  ;-)
 
-echo Forcibly installing the initial set of rpms...
+case "$DIST" in
+ca*)
+    addline etc/passwd		"root:x:0:0:root:/root:/bin/bash"
+    addline etc/passwd		"bin:x:1:1:bin:/bin:"
+    addline etc/passwd		"daemon:x:2:2:daemon:/sbin:"
+    addline etc/passwd		"adm:x:3:4:adm:/var/adm:"
+    addline etc/passwd		"lp:x:4:7:lp:/var/spool/lpd:"
+    addline etc/passwd		"sync:x:5:0:sync:/sbin:/bin/sync"
+    addline etc/passwd		"shutdown:x:6:11:shutdown::/sbin/shutdown"
+    addline etc/passwd		"halt:x:7:0:halt:/sbin:/sbin/halt"
+    addline etc/passwd		"mail:x:8:12:mail:/var/spool/mail:"
+    addline etc/passwd		"news:x:9:13:news:/var/spool/news:"
+    addline etc/passwd		"uucp:x:10:14:uucp:/var/spool/uucp:"
+    addline etc/passwd		"operator:x:11:0:operator:/root:"
+    addline etc/passwd		"games:x:12:100:games:/usr/games:"
+    addline etc/passwd		"gopher:x:13:30:man:/usr/lib/gopher-data:"
+    addline etc/passwd		"ftp:x:14:50:FTP user:/home/ftp:"
+    addline etc/passwd		"man:x:15:15:Manuals Owner:/:"
+    addline etc/passwd		"majordom:x:16:16:Majordomo:/:/bin/false"
+    addline etc/passwd		"postgres:x:17:17:Postgres User:/home/postgres:/bin/bash"
+    addline etc/passwd		"mysql:x:18:18:MySQL User:/var/lib/mysql:/bin/false"
+    addline etc/passwd		"bind:x:19:19:BIND Server Pseudo User:/:/bin/false"
+    addline etc/passwd		"httpd:x:55:55:HTTP User:/:/bin/false"
+    addline etc/passwd		"nobody:x:65534:65534:Nobody:/:/bin/false"
+    addline etc/passwd		"col:x:100:100:Caldera OpenLinux User:/home/col:/bin/bash"
+    addline etc/group		"root::0:root"
+    addline etc/group		"bin::1:root,bin,daemon"
+    addline etc/group		"daemon::2:root,bin,daemon"
+    addline etc/group		"sys::3:root,bin,adm"
+    addline etc/group		"adm::4:root,adm,daemon"
+    addline etc/group		"tty::5:"
+    addline etc/group		"disk::6:root"
+    addline etc/group		"lp::7:daemon,lp"
+    addline etc/group		"mem::8:"
+    addline etc/group		"kmem::9:"
+    addline etc/group		"wheel::10:root"
+    addline etc/group		"operator::11:"
+    addline etc/group		"mail::12:mail"
+    addline etc/group		"news::13:news"
+    addline etc/group		"uucp::14:uucp"
+    addline etc/group		"man::15:"
+    addline etc/group		"majordom::16:"
+    addline etc/group		"database::17:"
+    addline etc/group		"mysql::18:"
+    addline etc/group		"bind::19:"
+    addline etc/group		"games::20:"
+    addline etc/group		"gopher::30:"
+    addline etc/group		"dip::40:"
+    addline etc/group		"utmp::45:"
+    addline etc/group		"ftp::50:"
+    addline etc/group		"http::55:"
+    addline etc/group		"users::100:"
+    addline etc/group		"nobody::65534:"
+    addline etc/group		"gdm::87:"
+    ;;
+esac
 
-for rpm in $BASH_RPMS
-do
-    rpm_file=`rpm_file $rpm`
-    $SUDO rpm -i --nodeps --root `pwd` $rpm_file
+echo Install the rpms...
+CURRENTDIR=`pwd`
+
+for rpm in $RPMS ; do
+    OUTRPM=${rpm%-*}
+    echo -n ${OUTRPM##*/}...
+    if [ "$rpm" = "dev-" ] && [ "$DIST" = "rh70" ]; then
+	echo
+	addline etc/group 'floppy:x:19:'
+	#$SUDO /usr/sbin/groupadd -g 19 -r -f floppy > /dev/null	#Use this instead?
+    fi
+    if echo "$rpm" | grep -q '#' 2>/dev/null ; then
+	echo -n \(2+\)
+        $SUDO rpm -i --root $CURRENTDIR `rpm_params $DIST $rpm` --noscripts --notriggers `rpm_file $rpm`	#--nodeps is set where needed by rpm_params
+        $SUDO rpm -i --root $CURRENTDIR `rpm_params $DIST $rpm` --replacepkgs `rpm_file $rpm`	#--nodeps is set where needed by rpm_params
+    else
+        $SUDO rpm -i --root $CURRENTDIR `rpm_params $DIST $rpm` `rpm_file $rpm`	#--nodeps is set where needed by rpm_params
+    fi
+    if [ "$rpm" = "msec-" ]; then
+	export SECURE_LEVEL=1				#Mandrake: lie that it has been set.
+	#$SUDO chroot . usr/sbin/msec 1				#Mandrake: 'Couldn't find used secure level, You should correct this problem by running /usr/sbin/msec' in other post scripts.
+    fi
 done
+echo Done!
 
-rpms=""
-
-for rpm in setup- info- ncurses-
-do
-    rpm_file=`rpm_file $rpm`
-    rpms="$rpms $rpm_file"
-done
-
-$SUDO rpm -i --nodeps --root `pwd` $rpms
-
-echo done
-
-echo Installing everything else...
-
-rpms=""
-for rpm in $REST
-do
-    file=`rpm_file $rpm`
-    rpms="$rpms $file"
-done
-
-$SUDO rpm -i --root `pwd` $rpms
-
-echo done
-
-echo Copying /bin/true over /sbin/hwclock
+echo Copying bin/true over sbin/hwclock...
 $SUDO cp bin/true sbin/hwclock
-$SUDO rm etc/pam.d/*
+#Ummm, is this really necessary?  Yup, until I figure out how the pam stuff works.
+if [ -f etc/pam.d/gdm ]; then
+    $SUDO mv etc/pam.d/gdm tmp/gdm	#Need to keep pam/gdm
+    $SUDO rm etc/pam.d/*
+    $SUDO mv tmp/gdm etc/pam.d/gdm
+else
+    $SUDO rm etc/pam.d/*
+fi
 
-echo Installing the init files
+#No longer needed
+#echo Installing the init files...
+#$SUDO tar xpvf ../initfiles.tar || exit 1
 
-$SUDO tar xpf ../initfiles.tar || exit 1
+echo Making one line changes to configuration files..
+addline etc/fstab		"/dev/ubd/0	/		ext2	defaults 1 1"
+addline etc/fstab		"/proc		/proc		proc	defaults"
+addline etc/fstab		"devpts		/dev/pts	devpts	mode=0622 0 0"
+addline etc/fstab		"/dev/ubd/1	none		swap	sw"
+addline etc/hosts		"127.0.0.1		localhost"
+delline etc/inittab		"1:2345:respawn:/sbin/mingetty tty1"
+delline etc/inittab		"2:2345:respawn:/sbin/mingetty tty2"
+delline etc/inittab		"3:2345:respawn:/sbin/mingetty tty3"
+delline etc/inittab		"4:2345:respawn:/sbin/mingetty tty4"
+delline etc/inittab		"5:2345:respawn:/sbin/mingetty tty5"
+delline etc/inittab		"6:2345:respawn:/sbin/mingetty tty6"
+addline etc/inittab		"0:2345:respawn:/sbin/mingetty ttys/0"
+addline etc/inittab		"1:2345:respawn:/sbin/mingetty ttys/1"
+addline etc/inittab		"2:2345:respawn:/sbin/mingetty ttys/2"
+addline etc/inittab		"c:2345:respawn:/sbin/mingetty serial/0"
+addline etc/issue		"Welcome to the user-mode kernel."
+if [ -f etc/pam.d/ftp ]; then
+    delline etc/pam.d/ftp	"auth       required	/lib/security/pam_listfile.so item=user sense=deny file=/etc/ftpusers onerr=succeed"
+    delline etc/pam.d/ftp	"auth       required	/lib/security/pam_pwdb.so shadow nullok"
+    delline etc/pam.d/ftp	"auth       required	/lib/security/pam_shells.so"
+    delline etc/pam.d/ftp	"account    required	/lib/security/pam_pwdb.so"
+    delline etc/pam.d/ftp	"session    required	/lib/security/pam_pwdb.so"
+fi
+addline etc/pam.d/ftp		"#%PAM-1.0"
+addline etc/pam.d/ftp		"auth     required       pam_unix_auth.so"
+addline etc/pam.d/ftp		"account  required       pam_unix_acct.so"
+addline etc/pam.d/ftp		"password required       pam_unix_passwd.so"
+addline etc/pam.d/ftp		"session  required       pam_unix_session.so"
+if [ -f etc/pam.d/other ]; then
+    delline etc/pam.d/other	"auth     required       /lib/security/pam_deny.so"
+    delline etc/pam.d/other	"account  required       /lib/security/pam_deny.so"
+    delline etc/pam.d/other	"password required       /lib/security/pam_deny.so"
+    delline etc/pam.d/other	"session  required       /lib/security/pam_deny.so"
+fi
+addline etc/pam.d/other		"#%PAM-1.0"
+addline etc/pam.d/other		"auth     required       pam_unix_auth.so"
+addline etc/pam.d/other		"account  required       pam_unix_acct.so"
+addline etc/pam.d/other		"password required       pam_unix_passwd.so"
+addline etc/pam.d/other		"session  required       pam_unix_session.so"
+addline etc/securetty		"cua0"
+addline etc/securetty		"tty0"
+addline etc/securetty		"ttys/0"
+addline etc/securetty		"ttys/1"
+addline etc/securetty		"ttys/2"
+addline etc/sysconfig/keyboard	"KEYTABLE="
+addline etc/sysconfig/network	"NETWORKING=yes"
+addline etc/sysconfig/network	"FORWARD_IPV4=false"
+addline etc/sysconfig/network-scripts/ifcfg-eth0	"DEVICE=eth0"
+addline etc/sysconfig/network-scripts/ifcfg-eth0	"ONBOOT=YES"
+addline etc/rc.d/rc.sysinit	"/sbin/ifconfig eth0 arp"
+#addline etc/rc.d/rc.sysinit	"/sbin/um_eth_net_set eth0 100"			#default
+$SUDO mkdir --parents home/httpd/html
+$SUDO mkdir --parents dev/ubd
+echo -n Making /dev/ubd/
+for MINOR in `seq 0 7` ; do
+    echo -n $MINOR...
+    $SUDO mknod --mode=660 dev/ubd/$MINOR b 98 $MINOR
+    $SUDO chown root.disk dev/ubd/$MINOR
+done
+echo Done!
+
+
+echo Adding accounts and passwords.
+
+for ONEUSER in root user guest ; do
+    if [ "$ONEUSER" = "root" ]; then
+	HOMEDIR="root"
+    else
+	HOMEDIR="home/$ONEUSER"
+	$SUDO chroot . adduser $ONEUSER
+    fi
+    $SUDO mkdir $HOMEDIR/.ssh
+    $SUDO chmod 700 $HOMEDIR/.ssh
+    $SUDO touch $HOMEDIR/.ssh/authorized_keys
+    $SUDO chmod 600 $HOMEDIR/.ssh/authorized_keys
+    $SUDO touch $HOMEDIR/.Xclients
+    $SUDO chmod 755 $HOMEDIR/.Xclients
+    addline $HOMEDIR/.Xclients '#!/bin/bash'
+    addline $HOMEDIR/.Xclients 'xterm &'
+    if [ -f usr/bin/panel ]; then
+        addline $HOMEDIR/.Xclients 'panel &'
+    fi
+    if [ -f usr/bin/enlightenment ]; then
+        addline $HOMEDIR/.Xclients 'exec enlightenment'
+    elif [ -f usr/X11R6/bin/fvwm2 ]; then
+        addline $HOMEDIR/.Xclients 'exec fvwm'
+    elif [ -f usr/X11R6/bin/twm ]; then
+        addline $HOMEDIR/.Xclients 'exec twm'
+    fi
+    $SUDO chroot . chown $ONEUSER.$ONEUSER $HOMEDIR/.ssh $HOMEDIR/.ssh/authorized_keys $HOMEDIR/.Xclients
+done
+
+#How to set them manually.
+#echo spleenmaster	| $SUDO chroot . usr/bin/passwd --stdin root
+#echo corbathegreek	| $SUDO chroot . usr/bin/passwd --stdin user
+#echo chompinatthesavoy	| $SUDO chroot . usr/bin/passwd --stdin guest
+for ONEUSER in root user guest ; do	#Tough passwords ;-), but...
+    echo $ONEUSER	| $SUDO chroot . usr/bin/passwd --stdin $ONEUSER
+done
+$SUDO chroot . pwconv
+for ONEUSER in root user guest ; do	#... make them set new ones on login.
+    $SUDO chroot . chage -d 1 $ONEUSER ;	$SUDO chroot . chage -M 180 $ONEUSER
+done
+
+#Make the /lib/modules/2.9.77/ directory before the depmod section so it's there when depmod needs it.
+#Do not make into one line; the backslash-newline at the end of the first line is needed to separate the two lines in rc.sysinit.
+substline etc/rc.d/rc.sysinit '\(.*\-x /sbin/depmod.*\)' 'if [ ! -d /lib/modules/`/bin/uname -r` ]; then /bin/mkdir /lib/modules/`/bin/uname -r` ; fi\
+\1'
+
+if [ -f etc/rc.d/init.d/httpd ]; then
+    addline home/httpd/html/index.html	"<html><head><title>Welcome</title></head><body>I thought I'd put something here!</body></html>"
+fi
+if [ -f etc/rc.d/init.d/innd ]; then
+    if [ ! -d usr/lib/news ]; then
+        $SUDO mkdir usr/lib/news
+    fi
+    #$SUDO chown news.news usr/lib/news #?
+    addline etc/services 		"actived     1119/udp"
+fi
+
+if [ -f usr/X11R6/bin/Xnest ]; then
+    cd etc/X11
+    $SUDO ln -sf ../../usr/X11R6/bin/Xnest X
+    cd ../..
+fi
+
+if [ -f etc/X11/gdm/gdm.conf ]; then
+    substline etc/X11/gdm/gdm.conf '0=/usr/bin/X11/X' '0=/usr/bin/X11/Xnest -display xdisplay:0'
+fi
+
+if [ -f etc/X11/prefdm ]; then
+    substline etc/X11/prefdm 'fexit 1' 'exit 1'
+fi
+
+
+echo Set some basic networking information.  The SysV init script will replace these values if called with a \"reload\" parameter.
+case $DIST in
+ca24)	UMLIP="192.168.210.101"	HOSTNAME="caldera24.goober.org"		MACADDR="FE:FD:C0:A8:D2:65"	;;
+co51)	UMLIP="192.168.210.111"	HOSTNAME="connectiva51.goober.org"	MACADDR="FE:FD:C0:A8:D2:6F"	;;
+im62)	UMLIP="192.168.210.121"	HOSTNAME="immunix62.goober.org"		MACADDR="FE:FD:C0:A8:D2:79"	;;
+md71)	UMLIP="192.168.210.131"	HOSTNAME="mandrake71.goober.org"	MACADDR="FE:FD:C0:A8:D2:83"	;;
+rh62)	UMLIP="192.168.210.141"	HOSTNAME="redhat62.goober.org"		MACADDR="FE:FD:C0:A8:D2:8D"	;;
+rh70)	UMLIP="192.168.210.142"	HOSTNAME="redhat70.goober.org"		MACADDR="FE:FD:C0:A8:D2:8E"	;;
+*)	UMLIP="192.168.210.250"	HOSTNAME="uml-test.goober.org"		MACADDR="FE:FD:C0:A8:D2:FA"	;;
+esac
+GATEWAYIP="192.168.210.254"
+NETMASK="255.255.255.0"
+
+#addline etc/hosts					"$UMLIP	$HOSTNAME"
+addline etc/hosts					"192.168.210.101	caldera24	caldera24.goober.org"
+addline etc/hosts					"192.168.210.111	conectiva51	connectiva51.goober.org"
+addline etc/hosts					"192.168.210.121	immunix62	immunix62.goober.org"
+addline etc/hosts					"192.168.210.131	mandrake71	mandrake71.goober.org"
+addline etc/hosts					"192.168.210.141	redhat62	redhat62.goober.org"
+addline etc/hosts					"192.168.210.142	redhat70	redhat70.goober.org"
+addline etc/hosts					"192.168.210.250	uml-test	uml-test.goober.org"
+addline etc/hosts					"$GATEWAYIP	router xdisplay"
+addline etc/rc.d/rc.sysinit				"/sbin/ifconfig eth0 hw ether $MACADDR"
+addline etc/resolv.conf					"nameserver $GATEWAYIP"
+addline etc/sysconfig/network				"HOSTNAME=$HOSTNAME"
+addline etc/sysconfig/network-scripts/ifcfg-eth0	"IPADDR=$UMLIP"
+addline etc/sysconfig/network-scripts/ifcfg-eth0	"GATEWAY=$GATEWAYIP"
+addline etc/sysconfig/network-scripts/ifcfg-eth0	"NETMASK=$NETMASK"
+addline etc/sysconfig/network-scripts/ifcfg-eth0	"NETWORK=`networkof $UMLIP $NETMASK`"
+addline etc/sysconfig/network-scripts/ifcfg-eth0	"BROADCAST=`broadcastof $UMLIP $NETMASK`"
+addline etc/sysconfig/static-routes			"any host $GATEWAYIP dev eth0"
+addline etc/sysconfig/static-routes			"any net 0.0.0.0 netmask 0.0.0.0 gw $GATEWAYIP"
+if [ -f etc/squid/squid.conf ]; then
+    addline etc/squid/squid.conf			"acl localnet src $GATEWAYIP"
+    delline etc/squid/squid.conf			"http_access deny all"
+    addline etc/squid/squid.conf			"http_access allow localnet"
+    addline etc/squid/squid.conf			"http_access deny all"	#Order is important...
+    addline etc/services 				"squid          3128/tcp"
+    addline etc/services 				"squid-snmp     3401/udp"
+fi
+
+if [ -f etc/sendmail.cf ]; then
+    addline etc/services 				"sendmail-aux          587/tcp"		#SSL?
+fi
+
+#UML uses a different console.
+substline etc/rc.d/rc.sysinit ' /dev/tty0 ' ' /dev/ttys/0 '
+substline etc/rc.d/init.d/keytable ' /dev/tty0' ' /dev/ttys/0'
+
+#Earlier initscripts miss a "]":
+substline etc/rc.d/init.d/network '${gateway##\[0-9}' '${gateway##\[0-9\]}'
+#Initscripts 5.39 seems to have the "${bogus}" = "gw" test wrong; I think it should be ! "${bogus}" = "gw".
+substline etc/rc.d/init.d/network '\[ "${bogus' '\[ ! "${bogus'
+
+
+echo -n "Enabling services: "
+for SERVICE in httpd identd inetd innd named portmap sendmail smb snmpd ssh squid ; do
+    if [ -f etc/rc.d/init.d/$SERVICE ]; then 
+	echo -n "$SERVICE..."
+	if [ -f sbin/chkconfig ]; then
+            $SUDO chroot . chkconfig $SERVICE on
+	else
+	    echo This distribution doesn\'t have chkconfig - you\'ll have to initialize $SERVICE by hand.
+	fi
+    fi
+done
+echo Done!
+
+echo Removing other locales...
+if cd usr/share/locale ; then
+    for ONELANG in * ; do
+	if [ -d "$ONELANG" ]; then
+	    if [ "$ONELANG" != "en_US" ]; then
+		echo -n "$ONELANG"...
+		$SUDO rm -rf "$ONELANG"
+	    fi
+	fi
+    done
+    echo Done!
+    cd ../../..
+else
+    echo Unable to change to usr/share/locale
+fi
+
+#echo Zeroing out the rest of the filesystem...
+#$SUDO dd if=dev/zero of=tmp/allzeros bs=1024 2>/dev/null
+#$SUDO rm -f tmp/allzeros
+
+df .
 
 cd ..
 
 [ ! -d $FSFILE ] && $SUDO umount $MNTDIR || exit 1
 
-echo All set
+#echo Making sparse...
+#cp -pf --sparse=always $FSFILE $FSFILE.sparse
+#mv -f $FSFILE.sparse $FSFILE
+
+echo All set!
+
+
+
+#Jeff's original lines:
+#CDDIR=/mnt/cdrom
+# These are to get bash off the ground.  You probably shouldn't change them.
+#BASH_RPMS="filesystem- ldconfig- glibc- libtermcap- bash-"
+
+# These are all the others.  Add new rpms to this list if you want more stuff
+# in your filesystem.
+#BASERPMS="bdflush- fileutils- grep- mingetty- mount- net-tools- textutils- \
+#    shadow-utils- chkconfig- procps- sed- mktemp- vixie-cron- modutils- \
+#    e2fsprogs- logrotate- sysklogd- console-tools- gawk- initscripts- quota- \
+#    slang- pwdb- cracklib- cracklib-dicts- compat-glibc- glib- pam- \
+#    sh-utils- util-linux- SysVinit- tcp_wrappers- tcsh- gdbm- perl-5.00503- \
+#    netkit-base- telnet- ftp- wu-ftpd- indexhtml- zlib- lynx- findutils-"
+
+
+#Original hardcoded dependencies:
+#case $DIST in
+#rh62|im62)		#Redhat 6.2, Immunix 6.2
+#    # Increase this if you add more stuff and 100 Meg isn't enough.
+#    #BASE+CLIENT+SERVER: >=115M, BASE+CLIENT+SERVER+DEVEL: >=160M
+#    FSMEGS=300
+#
+#    RPMS=" setup- filesystem- basesystem- ldconfig- glibc- termcap- libtermcap- \
+#    mktemp- bash- ncurses- info- shadow-utils- fileutils- \
+#    bdflush- grep- mingetty- gawk- diffutils- textutils- mount- net-tools- \
+#    chkconfig- procps- sed- dev- vixie-cron- modutils- \
+#    e2fsprogs- popt- logrotate- sysklogd- console-tools- psmisc- which- \
+#    initscripts- quota- slang- pwdb- cracklib- cracklib-dicts- glib- pam- \
+#    sh-utils- util-linux- SysVinit- tcp_wrappers- gdbm- \
+#    iputils- readline- zlib- findutils- binutils- \
+#    bzip2- mailcap- bind-utils- gzip- \
+#    $RPMS uml-net-tools- devfsd- iptables- passwd- "
+#    #Client
+#    RPMS=" $RPMS vim-common- vim-minimal- telnet- ftp- tcsh- gpm- \
+#    indexhtml- lynx- perl- mc- vim-enhanced- strace- libstdc++- rpm- \
+#    groff- man- traceroute- less- ssh- tcpdump- ircii- "
+#    RPMS=" $RPMS inetd- "						#Inetd
+#    RPMS=" $RPMS krb5-configs- krb5-libs- imap- sendmail- "		#Email server
+#    #X
+#    RPMS=" $RPMS XFree86-libs- XFree86-xfs- Mesa- utempter- \
+#    `if [ "$DIST" = "rh62" ]; then echo $RPMDIR/XFree86-3.3.6-20.i386.rpm ; else echo $RPMDIR/XFree86-3.3.6-20_StackGuard.i386.rpm ; fi` \
+#    XFree86-Xnest- chkfontpath- XFree86-100dpi-fonts- \
+#    XFree86-75dpi-fonts- X11R6-contrib- xsysinfo- xpm- xosview- "
+#    #For gdm:
+#    RPMS=" $RPMS gtk+- gnome-audio- ORBit- audiofile- esound- libjpeg- libtiff- \
+#    libpng- libgr- libgr-progs- libungif- imlib- gnome-libs- gdm- "
+#    RPMS=" $RPMS wmconfig- fvwm2-icons- fvwm2- "			#fvwm2
+#    RPMS=" $RPMS freetype- fnlib- enlightenment- "			#enlightenment
+#    RPMS=" $RPMS libgtop- xloadimage- fortune-mod- redhat-logos- libxml- \
+#    libglade- xscreensaver- control-center- magicdev- gnome-core- "	#gnome
+#    RPMS=" $RPMS file- apache- "					#Apache/httpd
+#    RPMS=" $RPMS telnet-server- ssh-server- "				#Telnet/ssh
+#    RPMS=" $RPMS redhat-release- gd- linuxconf- "			#Linuxconf web configuration - has to be enabled.
+#    RPMS=" $RPMS pidentd- "						#Ident server
+#    RPMS=" $RPMS ucd-snmp- "
+#    #Servers
+#    RPMS=" $RPMS bind- caching-nameserver- "				#Bind/named
+#    RPMS=" $RPMS wu-ftpd- anonftp- "					#FTP
+#    RPMS=" $RPMS squid- "
+#    RPMS=" $RPMS cleanfeed- inn- "					#News Server
+#    RPMS=" $RPMS portmap- "
+#    RPMS=" $RPMS samba-common- samba- "
+#    #Devel
+#    #RPMS=" $RPMS kernel-headers- glibc-devel- cpp- egcs- "		#Development
+#    ;;
+#ca24)		#Caldera OpenLinux 2.4
+#    # Increase this if you add more stuff and 100 Meg isn't enough.
+#    #BASE+CLIENT+SERVER: >=115M, BASE+CLIENT+SERVER+DEVEL: >=160M
+#    FSMEGS=300
+#
+#    #lisa<>fileutils
+#    #lisa needs bash,sh-utils
+#    #sh-utils needs pam, util-linux, sed
+#    #pam needs pwdb, cracklib
+#    #util-linux needs tcsh,info
+#    #info needs gzip
+#
+#    RPMS=" setup- ld.so- glibc- termcap- \
+#    mktemp- gdbm- perl- ncurses- cracklib-#libpwdb-#libpam-#tcsh-#gzip-#info-#util-linux-#sed-#sh-utils-#fileutils-#lisa-#bash- \
+#    bdflush- grep- gawk- diffutils- textutils- net-tools- \
+#    procps- SysVinit-scripts-#SysVinit- sysklogd- vixie-cron- modutils- \
+#    ext2fs- popt- crontabs- logrotate- psmisc- which- \
+#    slang- glib- tcp_wrappers- \
+#    readline- findutils- binutils- \
+#    bzip2- mailcap- bind-utils- \
+#    $RPMS uml-net-tools- devfsd- iptables- pam-apps- OpenLinux- adduser- shadow-misc- bool- "
+#    #Client
+#    RPMS=" $RPMS gpm- vim- netkit-telnet- netkit-ftp- \
+#    lynx- strace- libstdc++- libz- rpm- \
+#    groff- man- traceroute- less- ssh- tcpdump-  "
+#    RPMS=" $RPMS netkit-base- "						#Inetd
+#    RPMS=" $RPMS imap- mtabase- sendmail- "				#Email server
+#    #X
+#    RPMS=" $RPMS XFree86-libs- XFree86-config- freetype- XFree86-fontserver- utempter- $RPMDIR/XFree86-3.3.6-3.i386.rpm \
+#    XFree86-Xnest- XFree86-fonts-100dpi- \
+#    XFree86-fonts-75dpi- XFree86-contrib- xpm- "
+#    #For gdm:
+#    RPMS=" $RPMS gtk+- libjpeg- libtiff- libpng- imlib- "
+#    RPMS=" $RPMS mesa- xscreensaver- "	#gnome
+#    RPMS=" $RPMS file- apache- "					#Apache/httpd
+#    RPMS=" $RPMS ssh-server- "						#Telnet/ssh
+#    RPMS=" $RPMS pidentd- "						#Ident server
+#    #Servers
+#    RPMS=" $RPMS bind-  "						#Bind/named
+#    RPMS=" $RPMS wu-ftpd- anonftp- "					#FTP
+#    RPMS=" $RPMS inn- "							#News Server
+#    RPMS=" $RPMS portmap- "
+#    RPMS=" $RPMS samba- "
+#    #Devel
+#    #RPMS=" $RPMS kernel-headers- glibc-devel- cpp- egcs- "		#Development
+#    ;;
+#co51)		#Connectiva 5.1
+#    #echo Not prepared, exiting.
+#    #exit 1
+#
+#    # Increase this if you add more stuff and 100 Meg isn't enough.
+#    #BASE+CLIENT+SERVER: >=115M, BASE+CLIENT+SERVER+DEVEL: >=160M
+#    FSMEGS=300
+#
+#    #initscripts fails to Require: gettext
+#
+#    RPMS=" setup- filesystem- basesystem- ldconfig- glibc- termcap- libtermcap- \
+#    mktemp- bash- ncurses- info- shadow-utils- fileutils- \
+#    bdflush- grep- mingetty- gawk- diffutils- textutils- mount- net-tools- \
+#    chkconfig- procps- sed- dev- e2fsprogs- modutils- psmisc- gettext- initscripts- vixie-cron- \
+#    popt- logrotate- sysklogd- console-tools- which- \
+#    quota- slang- pwdb- cracklib- cracklib-dicts- glib- pam- \
+#    sh-utils- util-linux- SysVinit- tcp_wrappers- gdbm- \
+#    readline- zlib- findutils- binutils- \
+#    bzip2- mailcap- bind-utils- gzip- \
+#    $RPMS uml-net-tools- devfsd- iptables- passwd- openssl- "
+#    #Client
+#    RPMS=" $RPMS vim-common- vim-minimal- telnet- netkit-base- ftp- tcsh- gpm- \
+#    indexhtml- lynx- perl- mc- strace- libstdc++- rpm- \
+#    groff- man- traceroute- less- openssh- openssh-clients- tcpdump- wserv- ircii- "
+#    RPMS=" $RPMS imap- procmail- sendmail- "		#Email server
+#    #X
+#    RPMS=" $RPMS XFree86-libs- XFree86-xfs- Mesa- utempter- $RPMDIR/XFree86-3.3.6-15cl.i386.rpm \
+#    XFree86-Xnest- chkfontpath- XFree86-100dpi-fonts- \
+#    XFree86-75dpi-fonts- X11R6-contrib- xpm- "
+#    #For gdm:
+#    RPMS=" $RPMS gtk+- gnome-audio- ORBit- audiofile- esound- libjpeg- libtiff- \
+#    libpng- libgr- libgr-progs- libungif- imlib- gnome-libs- gdm- "
+#    RPMS=" $RPMS wmconfig- wmpixmaps- fvwm2- "				#fvwm2
+#    RPMS=" $RPMS freetype- fnlib- libghttp- enlightenment- "		#enlightenment
+#    RPMS=" $RPMS libgtop- xloadimage- fortune-mod- libxml- \
+#    libglade- xscreensaver- control-center- icewm- gdk-pixbuf- gnome-core- "	#gnome
+#    RPMS=" $RPMS file- apache- "					#Apache/httpd
+#    RPMS=" $RPMS telnet-server- openssh-server- "			#Telnet/ssh
+#    RPMS=" $RPMS versao-conectiva- libgd- linuxconf- "			#Linuxconf web configuration - has to be enabled.
+#    RPMS=" $RPMS pidentd- "						#Ident server
+#    RPMS=" $RPMS ucd-snmp- "
+#    #Servers
+#    RPMS=" $RPMS bind- caching-nameserver- "				#Bind/named
+#    RPMS=" $RPMS wu-ftpd- anonftp- "					#FTP
+#    RPMS=" $RPMS squid- "
+#    RPMS=" $RPMS perl-MD5- cleanfeed- inn- "				#News Server
+#    RPMS=" $RPMS portmap- "
+#    RPMS=" $RPMS samba- "
+#    #Devel
+#    #RPMS=" $RPMS kernel-headers- glibc-devel- cpp- egcs- "		#Development
+#    ;;
+#md71)		#Mandrake 7.1
+#    # Increase this if you add more stuff and 100 Meg isn't enough.
+#    #BASE+CLIENT+SERVER: >=115M, BASE+CLIENT+SERVER+DEVEL: >=160M
+#    FSMEGS=300
+#
+#    RPMS=" setup- filesystem- ldconfig- glibc- termcap- libtermcap- \
+#    mktemp- bash- info-install- bzip2- fileutils- perl-base- gdbm- perl- \
+#    shadow-utils- grep- sed- textutils- dev- msec- popt- chkconfig- gpm- ncurses- info- \
+#    bdflush- mingetty- gawk- diffutils- mount- net-tools- \
+#    procps- vixie-cron- modutils- \
+#    e2fsprogs- logrotate- sysklogd- console-tools- psmisc- which- \
+#    tcsh- initscripts- utempter- quota- slang- pwdb- cracklib- cracklib-dicts- glib- pam- \
+#    sh-utils- util-linux- SysVinit- newt- ntsysv- tmpwatch- crontabs- etcskel- findutils- \
+#    getty_ps- gzip- hdparm- kernel- less- losetup- libstdc++- groff- man- passwd- procmail- \
+#    mandrake-release- rootfiles- zlib- rpm- sash- ash- setserial- stat- rmt- tar- time- \
+#    vim-minimal- lilo- grub- mkinitrd- cpio- mkbootdisk- isapnptools- basesystem- tcp_wrappers- \
+#    readline- binutils- mailcap- bind-utils- \
+#    $RPMS uml-net-tools- devfsd- iptables- "
+#    #Client
+#    RPMS=" $RPMS netkit-base- telnet- ftp- \
+#    indexhtml- lynx- mandrake_desk- mc- ctags- vim-common- vim-enhanced- strace- \
+#    traceroute- ssh- tcpdump- "
+#    RPMS=" $RPMS imap- sendmail- "		#Email server
+#    #X
+#    RPMS=" $RPMS freetype- XFree86-libs- XFree86-server-common- XFree86-xfs- Mesa-common- svgalib- Mesa- xinitrc- \
+#    xterm- gcc-cpp- menu- $RPMDIR/XFree86-3.3.6-14mdk.i586.rpm \
+#    XFree86-Xnest- chkfontpath- XFree86-100dpi-fonts- \
+#    XFree86-75dpi-fonts- X11R6-contrib- xsysinfo- xpm- xosview- "
+#    #For gdm:
+#    RPMS=" $RPMS gtk+- gnome-audio- ORBit- libjpeg- libtiff- \
+#    libpng- libgr- libgr-progs- libungif- imlib- audiofile- esound- gnome-libs- gdm- "
+#    RPMS=" $RPMS wmconfig- fvwm2-icons- fvwm2- "			#fvwm2
+#    RPMS=" $RPMS fnlib- ImageMagick- libghttp- enlightenment- "			#enlightenment
+#    RPMS=" $RPMS bc- libgtop- fortune-mod- libxml- \
+#    libglade- control-center- xli- xscreensaver- gmp- librep- rep-gtk- sawmill- gdk-pixbuf- gnome-core- "	#gnome
+#    RPMS=" $RPMS file- mm- apache- "					#Apache/httpd
+#    RPMS=" $RPMS telnet-server- ssh-server- "			#Telnet/ssh
+#    RPMS=" $RPMS gd- linuxconf- "					#Linuxconf web configuration - has to be enabled.
+#    #RPMS=" $RPMS pidentd- "						#Ident server not included in Mandrake?
+#    RPMS=" $RPMS perl-PDL- ucd-snmp- "
+#    #Servers
+#    RPMS=" $RPMS bind- caching-nameserver- "				#Bind/named
+#    RPMS=" $RPMS wu-ftpd- anonftp- "					#FTP
+#    RPMS=" $RPMS squid- "
+#    RPMS=" $RPMS cleanfeed- inn- "					#News Server
+#    RPMS=" $RPMS portmap- "
+#    RPMS=" $RPMS samba-common- samba- "
+#    #Devel
+#    #RPMS=" $RPMS kernel-headers- glibc-devel- cpp- egcs- "		#Development
+#    ;;
+#rh70)	#RedHat 7.0
+#    # Increase this if you add more stuff and 100 Meg isn't enough.
+#    #BASE+CLIENT+SERVER: >=115M, BASE+CLIENT+SERVER+DEVEL: >=160M
+#    FSMEGS=360
+#
+#    RPMS=" setup- filesystem- basesystem- glibc- termcap- libtermcap- \
+#    mktemp- bash- ncurses- info- shadow-utils- fileutils- \
+#    bdflush- grep- mingetty- gawk- diffutils- textutils- mount- net-tools- \
+#    chkconfig- procps- sed- dev- popt- logrotate- sysklogd- e2fsprogs- \
+#    psmisc- which- modutils- initscripts- vixie-cron- console-tools- \
+#    quota- slang- pwdb- cracklib- words- cracklib-dicts- glib- db3- pam- \
+#    sh-utils- util-linux- SysVinit- tcp_wrappers- gdbm- \
+#    iputils- readline- zlib- findutils- binutils- \
+#    bzip2- mailcap- bind-utils- gzip- \
+#    $RPMS uml-net-tools- devfsd- iptables- passwd- "
+#    #Client
+#    RPMS=" $RPMS vim-common- vim-minimal- telnet- ftp- tcsh- gpm- \
+#    indexhtml- compat-glibc- perl- lynx- db2- mc- vim-enhanced- strace- libstdc++- db1- rpm- \
+#    groff- man- traceroute- less- openssl- openssh- openssh-clients- tcpdump- ircii- "
+#    RPMS=" $RPMS gmp- python- xinetd- "				#Inetd
+#    RPMS=" $RPMS krb5-libs- stunnel- imap- procmail- openldap- cyrus-sasl- sendmail- " 		#Email server
+#    #X
+#    RPMS=" $RPMS XFree86-libs- XFree86-xfs- Mesa- utempter- $RPMDIR/XFree86-4.0.1-1.i386.rpm \
+#    XFree86-Xnest- fvwm2-icons- fvwm2- chkfontpath- XFree86-100dpi-fonts- \
+#    XFree86-75dpi-fonts- XFree86-tools- xsysinfo- xosview- "
+#    #For gdm:
+#    RPMS=" $RPMS gtk+- gnome-audio- ORBit- libungif- libpng- libjpeg- libtiff- netpbm- \
+#    netpbm-progs- imlib- audiofile- esound- gnome-libs- wmconfig- \
+#    switchdesk- xinitrc- XFree86-xdm- gdm- "
+#    RPMS=" $RPMS freetype- fnlib- enlightenment- "			#enlightenment
+#    RPMS=" $RPMS libgtop- xloadimage- fortune-mod- redhat-logos- libxml- \
+#    libglade- xscreensaver- gdk-pixbuf- control-center- magicdev- \
+#    pygtk-libglade- pygnome-libglade- librep- rep-gtk- rep-gtk-gnome- sawfish- gnome-core- "	#gnome
+#    RPMS=" $RPMS file- apache- "					#Apache/httpd
+#    RPMS=" $RPMS telnet-server- openssh-server- "			#Telnet/ssh
+#    RPMS=" $RPMS linuxconf- "					#Linuxconf web configuration - has to be enabled.
+#    RPMS=" $RPMS pidentd- "						#Ident server
+#    RPMS=" $RPMS ucd-snmp- "
+#    #Servers
+#    RPMS=" $RPMS bind- caching-nameserver- "				#Bind/named
+#    RPMS=" $RPMS wu-ftpd- anonftp- "					#FTP
+#    RPMS=" $RPMS squid- "
+#    RPMS=" $RPMS cleanfeed- inn- "					#News Server
+#    RPMS=" $RPMS portmap- "
+#    RPMS=" $RPMS samba-common- samba- "
+#    #Devel
+#    #RPMS=" $RPMS kernel-headers- glibc-devel- cpp- egcs- "		#Development
+#    ;;
+#*)
+#    echo Unknown distribution $DIST
+#    exit
+#    ;;
+#esac
+
+
+#while true; do
+#
+#FSFILE=`get_data "File that the new filesystem should be built in" \
+#    $FSFILE verify_fs`
+#
+#[ ! -d $FSFILE ] && [ ! -b $FSFILE ] &&
+#    FSMEGS=`get_data "Size of the filesystem in megabytes" $FSMEGS verify_size`
+#
+#CDDIR=`get_data "Mount point of your RH distribution" $CDDIR verify_mnt`
+#
+#echo
+#echo The root filesystem will be built in \"$FSFILE\"
+#[ ! -d $FSFILE ] && [ ! -b $FSFILE ] &&
+#    echo It will be "$FSMEGS"M in size
+#echo Your Red Hat distribution is mounted at \"$CDDIR\"
+#echo
+#OK=`get_data "Is this information correct" y verify_yn`
+#[ $OK = 'y' ] && break;
+#
+#done
+#
+#RPMDIR=$CDDIR/RedHat/RPMS
+
+
