@@ -126,7 +126,12 @@ esac
 #I think we have to pass on lpr.  Skipping cvs/rcs, postgresql, rsh, 
 #rsync, rwall, rwho, talks, tftp, times, uucp, yp, syslog port
 
-. ./functions
+if [ -f ./functions ] ; then
+    . ./functions
+else
+    . /var/lib/uml/functions
+fi
+
 #addline() #Params: $1 File that needs the additional line, $2 line to add.
 #bitstomask()
 #broadcastof()
