@@ -4,62 +4,74 @@
 #
 # Translated from playlog.py, by Upi Tamminen
 
-use Time::HiRes qw(usleep);
+my @option_handlers;
+
 use tty_log;
+use tty_out;
+use db_out;
 use IO::Handle;
 
 use strict;
 
 my $usage_string = 
-"Usage : perl playlog.pl [-f] [-n] [-a] log-file [tty-id]
+"Usage : perl playlog.pl [ options ] log-file [tty-id]
 	-f - follow the log, similar to 'tail -f'
-	-n - full-speed playback, without mimicing the original timing
-	-a - all traffic, including both tty reads and writes
-	-e - print out logged execs
-    By default, playlog will retain the original timing in the log.  -n will
-just dump the log out without that timing.  Also by default, only tty writes
-will be output.  This will provide an authentic view of what the original
-user saw, but it will omit non-echoed characters, such as passwords.  
--a will output ttys reads as well, but this has the side-effect of duplicating
-all normal, echoed, user input.
-    The -e option prints out logged execs.  This option exists because it's
-possible to run commands on a system without anything allocating a terminal.
-In this situation, tty logging is useless because no data flows through a 
-terminal.  However, execs will be logged, and the -e switch will print them
-out, allowing you to see everything that an intruder did without a terminal.
 ";
 
 sub Usage {
     print $usage_string;
+
+    foreach my $handler (@option_handlers){
+	print $handler->{usage};
+    }
     exit(1);
 }
 
-my $follow = 0;
-my $fast = 0;
-my $all = 0;
-my $execs = 0;
+sub register_output {
+    my $name = shift;
+    my $option_proc = shift;
+    my $output_proc = shift;
+    my $one_tty = shift;
+    my $usage = shift;
 
-while(@ARGV){
+    push @option_handlers, { active => 0,
+			     name => $name,
+			     option => $option_proc, 
+			     output => $output_proc,
+			     one_tty => $one_tty,
+			     usage => $usage };
+}
+
+my $follow = 0;
+
+LOOP: while(@ARGV){
     my $arg = shift @ARGV;
+
     if($arg eq "-f"){
 	$follow = 1;
     }
-    elsif($arg eq "-n"){
-	$fast = 1;
-    }
-    elsif($arg eq "-a"){
-	$all = 1;
-    }
-    elsif($arg eq "-e"){
-	$execs = 1;
-    }
     else {
 	unshift @ARGV, $arg;
+
+	foreach my $handler (@option_handlers){
+	    if($handler->{option}(\@ARGV)){
+		$handler->{active} = 1;
+		next LOOP;
+	    }
+	}
+
 	last;
     }
 }
 
 !@ARGV and Usage();
+
+if(!map { $_->{active} ? 1 : () } @option_handlers){
+    my @tty_out = map { $_->{name} eq "tty" ? $_ : () } @option_handlers;
+    !@tty_out and 
+        die "No output handlers active and no tty output handler defined";
+    $tty_out[0]->{active} = 1;
+}
 
 my $file = shift @ARGV;
 
@@ -91,7 +103,11 @@ foreach my $tty (@ttys){
 
 @ttys = keys(%unique_ttys);
 
-if(@ttys > 1 and !defined($tty_id)){
+my @need_tty = map { $_->{active} && $_->{one_tty} ? $_->{name} : () 
+		     } @option_handlers;
+
+if((@ttys > 1) && !defined($tty_id) && @need_tty){
+    print join(" and ", @need_tty) . " output(s) need a tty id to follow\n";
     print "You have the following ttys to choose from:\n";
     print join(" ", @ttys) . "\n";
     exit(0);
@@ -99,19 +115,13 @@ if(@ttys > 1 and !defined($tty_id)){
 
 !defined($tty_id) and $tty_id = $ttys[0];
 
-STDOUT->autoflush(1);
-
-my $base;
-my $cur;
-
 foreach my $op (@ops){
-    !defined($base) and $base = $op->{secs};
-
-    my $next = ($op->{secs} - $base) * 1000 * 1000 + $op->{usecs};
-    !$fast && defined($cur) and usleep($next - $cur);
-
-    print_op($op);
-    $cur = $next;
+    foreach my $handler (@option_handlers){
+	if($handler->{active} && 
+	   (!$handler->{one_tty} || ($op->{tty} == $tty_id))){
+	    $handler->{output}->($op);
+	}
+    }
 }
 
 !$follow and exit 0;
@@ -119,27 +129,4 @@ foreach my $op (@ops){
 while(1){
     my $op = read_log_line($file, \*FILE, 1);
 
-    print_op($op);
-}
-
-sub print_op {
-    my $op = shift;
-
-    if(($op->{op} eq "exec") && !$execs){
-	return;
-    }
-    elsif($execs and ($op->{op} ne "exec")){
-	return;
-    }
-    elsif(($op->{op} eq "open") || ($op->{op} eq "close")){
-	return;
-    }
-    elsif($op->{op} eq "write"){
-	($op->{tty} ne $tty_id) and return;
-	($op->{direction} ne "write") && !$all and return;
-    }
-
-    print $op->{string};
-
-    $op->{op} eq "exec" and print "\n";
 }
