@@ -8,6 +8,8 @@ package hppfslib;
 use Exporter   ();
 use vars       qw(@ISA @EXPORT);
 
+use strict;
+
 @ISA         = qw(Exporter);
 @EXPORT      = qw(&remove_line &host &proc);
 
