@@ -8,3 +8,6 @@ uml_net : $(OBJS)
 
 clean : 
 	rm -f uml_net $(OBJS) *~
+
+install :
+	install uml_net /usr/bin
