@@ -281,7 +281,7 @@ int bind_socket(int fd, const char *name)
   struct sockaddr_un sun;
 
   sun.sun_family = AF_UNIX;
-  strcpy(sun.sun_path, name);
+  strncpy(sun.sun_path, name, sizeof(sun.sun_path));
   
   if(bind(fd, (struct sockaddr *) &sun, sizeof(sun)) < 0){
     if((errno == EADDRINUSE) && still_used(&sun)) return(EADDRINUSE);
