@@ -185,20 +185,25 @@ static int mk_node(char *devname, int major, int minor)
 static int route_and_arp(char *dev, char *addr, int need_route, 
 			 struct output *output)
 {
-  char *arp_argv[] = { "arp", "-Ds", addr, "eth0", "pub", NULL };
+  char echo[sizeof("echo 1 > /proc/sys/net/ipv4/conf/XXXXXXXXXX/proxy_arp")];
+  char *arp_argv[] = { "bash", "-c", echo, NULL };
   char *route_argv[] = { "route", "add", "-host", addr, "dev", dev, NULL };
 
   if(do_exec(route_argv, need_route, output)) return(-1);
+  sprintf(echo, "echo 1 > /proc/sys/net/ipv4/conf/%s/proxy_arp", dev);
   do_exec(arp_argv, 0, output);
   return(0);
 }
 
 static int no_route_and_arp(char *dev, char *addr)
 {
-  char *no_arp_argv[] = { "arp", "-i", "eth0", "-d", addr, "pub", NULL };
+  char echo[sizeof("echo 0 > /proc/sys/net/ipv4/conf/XXXXXXXXXX/proxy_arp")];
+  char *no_arp_argv[] = { "bash", "-c", echo, NULL };
   char *no_route_argv[] = { "route", "del", "-host", addr, "dev", dev, NULL };
 
   do_exec(no_route_argv, 0, NULL);
+  snprintf(echo, sizeof(echo), 
+	   "echo 0 > /proc/sys/net/ipv4/conf/%s/proxy_arp", dev);
   do_exec(no_arp_argv, 0, NULL);
   return(0);
 }
@@ -373,7 +378,6 @@ static void slip_up(char **argv)
   char slip_name[sizeof("slxxxx\0")];
   char *up_argv[] = { "ifconfig", slip_name, gate_addr, "pointopoint", 
 		      remote_addr, "mtu", "1500", "up", NULL };
-  char *arp_argv[] = { "arp", "-Ds", remote_addr, "eth0", "pub", NULL };
   int disc, sencap, n;
   
   disc = N_SLIP;
@@ -388,7 +392,7 @@ static void slip_up(char **argv)
   }
   sprintf(slip_name, "sl%d", n);
   if(do_exec(up_argv, 1, NULL)) exit(1);
-  do_exec(arp_argv, 1, NULL);
+  route_and_arp(slip_name, remote_addr, 0, NULL);
   forward_ip(NULL);
 }
 
@@ -398,17 +402,15 @@ static void slip_down(char **argv)
   char *remote_addr = argv[1];
   char slip_name[sizeof("slxxxx\0")];
   char *down_argv[] = { "ifconfig", slip_name, "0.0.0.0", "down", NULL };
-  char *no_arp_argv[] = { "arp", "-i", "eth0", "-d", remote_addr, "pub", 
-			  NULL };
   int n, disc;
 
   if((n = ioctl(fd, TIOCGETD, &disc)) < 0){
     perror("Getting slip line discipline");
     exit(1);
   }
-  sprintf(slip_name, "sl%d", n);  
+  sprintf(slip_name, "sl%d", n);
+  no_route_and_arp(slip_name, remote_addr);
   if(do_exec(down_argv, 1, NULL)) exit(1);
-  do_exec(no_arp_argv, 1, NULL);
 }
 
 static void slip_v0_v2(int argc, char **argv)
@@ -510,6 +512,10 @@ static void tuntap_change(int argc, char **argv)
   char *dev = argv[1];
   char *address = argv[2];
 
+  if(setreuid(0, 0) < 0){
+    perror("setreuid");
+    exit(1);
+  }
   if(!strcmp(op, "add")) route_and_arp(dev, address, 0, NULL);
   else no_route_and_arp(dev, address);
 }
