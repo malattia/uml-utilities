@@ -38,6 +38,8 @@ make install DESTDIR=$RPM_BUILD_ROOT
 %attr(4755,root,root)			%{_bindir}/uml_net
 %attr(755,root,root)			%{_bindir}/uml_switch
 %attr(755,root,root)		%dir	%{_libdir}/uml
+%attr(755,root,root)			%{_bindir}/uml_mkcow
+%attr(755,root,root)			%{_bindir}/uml_watchdog
 #%attr(755,root,root)			%{_libdir}/uml/functions
 %attr(755,root,root)			%{_libdir}/uml/port-helper
 
