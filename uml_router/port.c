@@ -63,14 +63,13 @@ static void update_src(struct port *port, struct packet *p)
   if(port != last){
     /* old value differs from actual input port */
 
-    printf(" Addr: %02x:%02x:%02x:%02x:%02x:%02x "
-	   " New port %d",
+    printf(" Addr: %02x:%02x:%02x:%02x:%02x:%02x New port %d",
 	   p->header.src[0], p->header.src[1], p->header.src[2],
 	   p->header.src[3], p->header.src[4], p->header.src[5],
 	   port->control);
 
     if(last != NULL){
-      printf("old port %d", last->control);
+      printf(" old port %d", last->control);
       delete_hash(p->header.src);
     }
     printf("\n");
