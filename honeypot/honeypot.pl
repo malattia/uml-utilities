@@ -32,6 +32,7 @@ $hppfs->add("cmdline" => proc("cmdline"),
 	    "pid/mounts" => $remove_filesystems,
 	    "stat" => proc("stat"),
 	    "uptime" => proc("uptime"),
-	    "version" => proc("version") );
+	    "version" => proc("version"),
+	    dup_proc_dir("bus", $dir) );
 
 $hppfs->handler();
