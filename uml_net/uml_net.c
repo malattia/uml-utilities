@@ -631,7 +631,7 @@ static void tuntap_v3(int argc, char **argv)
 }
 #endif
 
-#define CURRENT_VERSION (2)
+#define CURRENT_VERSION (3)
 
 void (*ethertap_handlers[])(int argc, char **argv) = {
   ethertap_v0, 
