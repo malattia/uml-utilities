@@ -1,35 +1,17 @@
-use strict;
+# 
+# Copyright (C) 2002, 2003 Jeff Dike (jdike@karaya.com)
+# Licensed under the GPL
+#
 
-my $TTY_LOG_OPEN = 1;
-my $TTY_LOG_CLOSE = 2;
-my $TTY_LOG_WRITE = 3;
+use tty_log;
+
+use strict;
 
 !@ARGV and die "Usage : perl tty_log.pl log-file";
 
 my $file = $ARGV[0];
-open FILE, "<$file" or die "Couldn't open $file : $!";
 
-my $log = join("", <FILE>);
-
-my @ops = ();
-
-while($log){
-    (my $op, my $tty, my $len, $log) = unpack("iIia*", $log);
-    (my $data, $log) = unpack("a${len}a*", $log);
-    if($op == $TTY_LOG_OPEN){
-	my ($old_tty) = unpack("I", $data);
-	push @ops, { op => "open", tty => $tty, old_tty => $old_tty };
-    }
-    elsif($op == $TTY_LOG_CLOSE){
-	push @ops, { op => "close", tty => $tty };
-    }
-    elsif($op == $TTY_LOG_WRITE){
-	push @ops, { op => "write", tty => $tty, string => $data };
-    }
-    else {
-	die "Bad tty_log op - $op";
-    }
-}
+my @ops = read_log($file);
 
 foreach my $op (@ops){
     if($op->{op} eq "open"){
@@ -40,7 +22,15 @@ foreach my $op (@ops){
 	printf("Closing tty 0x%x\n", $op->{tty});
     }
     elsif($op->{op} eq "write"){
-	printf("Write to tty 0x%x - '%s'\n", $op->{tty}, $op->{string});
+	if($op->{direction} eq "read"){
+	    printf("Read from tty 0x%x - '%s'\n", $op->{tty}, $op->{string});
+	}
+	elsif($op->{direction} eq "write"){
+	    printf("Write to tty 0x%x - '%s'\n", $op->{tty}, $op->{string});
+	}
+	else {
+	    die "Bad direction - '$op->{direction}'";
+	}
     }
     else {
 	die "Bad op - " . $op->{op};
