@@ -1,0 +1,92 @@
+Q. What is UM-Eth-Net?
+A. It is an Ethernet driver which works only with User-Mode Linux (UML).  It
+   allows a UML to connect to other UMLs via a virtual network.  It also allows
+   a UML to act as a host on your real world Ethernet subnet or use your
+   native machine as a router.
+
+Q. How do I add it to a UML Kernel?
+A. Patch yout UML kernel source with um_eth_net-0.005.diff
+   Edit arch/um/config.in and add:
+
+define_bool CONFIG_NET_UM_ETH y
+
+   Recompile your kernel and your set to go.  You'll see:
+
+User-mode Linux network interface 0.005 (eth0)
+User-mode Linux network interface 0.005 (eth1)
+User-mode Linux network interface 0.005 (eth2)
+User-mode Linux network interface 0.005 (eth3)
+
+   in the boot up sequence if it worked.
+
+Q. How do I use it?
+A. Fire up two UM-Eth-Net enabled kernels.
+   Fire up um_eth_net_util (tools/net/)
+   Inside of each UML configure eth0 with a hw addresses and
+   IP addresses (make sure the IP addresses are in the same subnet)
+
+ifconfig eth0 hw ether 0:0:10:0:0:1
+ifconfig eth0 10.0.0.1 netmask 255.255.255.0
+
+   (note there is no relationship between the hw address and the IP address,
+    just make sure the hw addresses are unique)
+
+   Now try and ping the other hosts.  Your notice some weird timing
+   but the packets do make it :-)
+
+Q. How do I make it act as a host on my REAL network?
+A. When you fire up um_eth_net_util use the following command line as root:
+
+um_eth_net_util eth0 100
+
+   This make the physical port eth0 be a member of UM-Eth-Net network 100
+   (100 is the default network number)
+
+Q. How do I get my native machine on the network?
+A. You need to have compiled your native kernel with:
+
+Under "Code maturity level options":
+ [*] Prompt for development and/or incomplete code/drivers 
+
+Under "Networking options":
+ [*] Kernel/User netlink socket
+ [*]   Routing messages
+ <*>   Netlink device emulation
+
+Under "Network Device support":
+ <*> Ethertap network tap (EXPERIMENTAL)
+
+   Then execute:
+
+um_eth_net_util tap0 100
+
+   Configure your native machine:
+
+ifconfig tap0 192.168.0.1 netmask 255.255.255.0 arp
+
+   Configure your UML.
+
+Q. How do I make more then one network?
+A. You'll have to get the program uml_set into a UML for this to work.
+   Once you have it there up can modify what network a UM-Eth-Net interface
+   is on with this command line (while in the UML):
+
+um_eth_net_set eth0 101
+
+   This make UM-Eth-Net interface eth0 a member of network 101.  Any other
+   UM-Eth-Net interface on any other UML in network 101 can now talk to
+   each other.
+
+Q. When I configure an IP address on a UM-Eth-Net interface I get something
+   like:
+
+Failed to forward 10 to pid 1340, errno = 1
+Failed to forward 10 to pid 1338, errno = 1
+Failed to forward 10 to pid 1340, errno = 1
+Failed to forward 10 to pid 1338, errno = 1
+
+A. I don't know what this is from, by running the UML as root this problem
+   goes away.
+
+Q. It doesn't work for me, what do I do?
+A. E-mail me at jleu@mindspring.com and I'll see if I can help.
