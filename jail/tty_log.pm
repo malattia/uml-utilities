@@ -19,6 +19,7 @@ use strict;
 my $TTY_LOG_OPEN = 1;
 my $TTY_LOG_CLOSE = 2;
 my $TTY_LOG_WRITE = 3;
+my $TTY_LOG_EXEC = 4;
 
 my $TTY_READ = 1;
 my $TTY_WRITE = 2;
@@ -69,6 +70,7 @@ sub read_log_line {
 	unpack("iIiiIIa*", $record);
 
     my $data;
+
     $len != 0 and $data = read_log_item($filename, $handle, $len, $wait);
 
     if($op == $TTY_LOG_OPEN){
@@ -86,6 +88,12 @@ sub read_log_line {
 
 	return( { op => "write", tty => $tty, string => $data, 
 		  direction => $op_name, secs => $sec, usecs => $usecs } );
+    }
+    elsif($op == $TTY_LOG_EXEC){
+	my @cmd = split("\0", $data);
+	my $string = join(" ", @cmd);
+	return( { op => "exec", tty => $tty, string => $string, secs => $sec, 
+		  usecs => $usecs } );
     }
     else {
 	die "Bad tty_log op - $op";
