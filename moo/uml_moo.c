@@ -172,14 +172,13 @@ int create_backing_file(char *in, char *out)
 	}
 	if(buf.st_size != size){
 		fprintf(stderr,"Size mismatch (%ld vs %ld) of COW header "
-			"vs backing file\n", (long int) buf.st_size, 
-			(long int) size);
+			"vs backing file\n", (long int) size, 
+			(long int) buf.st_size);
 		exit(1);
 	}
 	if(buf.st_mtime != mtime) {
 		fprintf(stderr,"mtime mismatch (%ld vs %ld) of COW "
-			"header vs backing file\n", buf.st_mtime, 
-			mtime);
+			"header vs backing file\n", mtime, buf.st_mtime);
 		exit(1);
 	}
 
@@ -211,7 +210,7 @@ int create_backing_file(char *in, char *out)
 		exit(1);
 	}
 
-	sectors = bitmap_len * 8;
+	sectors = size / sectorsize;
 	sector = malloc(sectorsize);
 	zeros = malloc(sectorsize);
 	if((sector == NULL) || (zeros == NULL)){
