@@ -1,4 +1,4 @@
-%define version 0.42_2.4.5
+%define version 0.43_2.4.6
 
 Name:				user-mode-linux
 Summary:			The user-mode port of the Linux kernel
@@ -14,11 +14,16 @@ BuildRoot:			/tmp/uml-kit
 
 
 %description
-This is the user-mode port of the Linux kernel - it runs a virtual machine in 
-a set of Linux processes.  This package also contains a number of other useful
-tools and utilities related to UML.
+This is the user-mode port of the Linux kernel - it runs a virtual 
+machine in a set of Linux processes.  This package also contains a 
+number of other useful tools and utilities related to UML.
 
 %changelog
+* Wed Jul  4 2001 Jeff Dike <jdike@karaya.com>
+- Merged the management console
+- Many bug fixes
+- 64 bit IO works again
+
 * Wed Mar  7 2001 Jeff Dike <jdike@karaya.com>
 - Redid the network drivers
 
@@ -75,6 +80,7 @@ if [ "$RPM_BUILD_ROOT" = "/tmp/uml-kit" ]; then
     make -C $CVS_POOL/doc/web UserModeLinux-HOWTO.txt
     make -C $CVS_POOL/tools/uml_net all
     make -C $CVS_POOL/tools/uml_router all
+    make -C $CVS_POOL/tools/mconsole all
 else
 	echo Invalid Build root
 	exit 1
@@ -100,10 +106,12 @@ if [ "$RPM_BUILD_ROOT" = "/tmp/uml-kit" ]; then
 
     install $CVS_POOL/tools/redhat/mkrootfs $RPM_BUILD_ROOT/usr/bin/mkrootfs
     install $CVS_POOL/tools/redhat/functions \
-	$RPM_BUILD_ROOT/var/lib/uml/functions
+	$RPM_BUILD_ROOT/usr/lib/uml/functions
     install $CVS_POOL/tools/uml_net/uml_net $RPM_BUILD_ROOT/usr/bin/uml_net
     install $CVS_POOL/tools/uml_router/uml_router \
 	$RPM_BUILD_ROOT/usr/bin/uml_router
+    install $CVS_POOL/tools/mconsole/uml_mconsole \
+	$RPM_BUILD_ROOT/usr/bin/uml_mconsole
 
     install -d $RPM_BUILD_ROOT/usr/doc/HOWTO
     install $CVS_POOL/doc/web/UserModeLinux-HOWTO.txt $RPM_BUILD_ROOT/usr/doc/HOWTO/UserModeLinux-HOWTO
@@ -128,7 +136,8 @@ fi
 %attr(755,root,root)				/usr/bin/linux
 %attr(644,root,root)                            /usr/lib/uml/modules.tar.gz
 %attr(755,root,root)				/usr/bin/mkrootfs
-%attr(755,root,root)				/var/lib/uml/functions
+%attr(755,root,root)				/usr/lib/uml/functions
 %attr(4755,root,root)				/usr/bin/uml_net
 %attr(755,root,root)				/usr/bin/uml_router
+%attr(755,root,root)				/usr/bin/uml_mconsole
 %attr(644,root,root)                            /usr/doc/HOWTO/UserModeLinux-HOWTO
