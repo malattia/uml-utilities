@@ -1,5 +1,5 @@
-OBJS = uml_router.o
-BIN = uml_router
+OBJS = uml_switch.o
+BIN = uml_switch
 CFLAGS = -g -Wall
 
 all : $(BIN)
