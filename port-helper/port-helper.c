@@ -6,18 +6,22 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/uio.h>
 
 static void send_fd(int fd, int target)
 {
   char anc[CMSG_SPACE(sizeof(fd))];
   struct msghdr msg;
   struct cmsghdr *cmsg;
-  int *fd_ptr;
+  struct iovec iov;
+  int *fd_ptr, pid = getpid();
 
   msg.msg_name = NULL;
   msg.msg_namelen = 0;
-  msg.msg_iov = NULL;
-  msg.msg_iovlen = 0;
+  iov = ((struct iovec) { iov_base : &pid,
+			  iov_len :  sizeof(pid) });
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
   msg.msg_flags = 0;
   msg.msg_control = anc;
   msg.msg_controllen = sizeof(anc);
