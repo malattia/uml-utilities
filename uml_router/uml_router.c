@@ -76,9 +76,7 @@ static void service_connection(struct connection *conn)
 
 static int match_addr(unsigned char *host, unsigned char *packet)
 {
-  if((packet[0] == 0xff) && (packet[1] == 0xff) && (packet[2] == 0xff) && 
-     (packet[3] == 0xff) && (packet[4] == 0xff) && (packet[5] == 0xff))
-    return(1);
+  if((packet[0] % 2) == 1) return(1);
   return((packet[0] == host[0]) && (packet[1] == host[1]) && 
 	 (packet[2] == host[2]) && (packet[3] == host[3]) && 
 	 (packet[4] == host[4]) && (packet[5] == host[5]));
@@ -92,7 +90,7 @@ static void handle_data(int fd)
 
   len = recvfrom(fd, &p, sizeof(p), 0, NULL, 0);
   if(len < 0){
-    perror("Reading request");
+    if(errno != EAGAIN) perror("Reading data");
     return;
   }
   for(c = head; c != NULL; c = next){
@@ -110,10 +108,14 @@ static void new_connection(int fd)
 {
   struct request req;
   struct connection *conn;
+  int len;
 
-  if(read(fd, &req, sizeof(req)) != sizeof(req)){
-    if(errno != 0) perror("Reading initial request");
-    close(fd);
+  len = read(fd, &req, sizeof(req));
+  if(len < 0){
+    if(errno != EAGAIN){
+      perror("Reading request");
+      close(fd);
+    }
     return;
   }
   switch(req.type){
@@ -166,8 +168,8 @@ void accept_connection(int fd)
     perror("accept");
     return;
   }
-  if(fcntl(new, F_SETFL, O_ASYNC | O_NONBLOCK) < 0){
-    perror("fcntl - setting O_ASYNC and O_NONBLOCK");
+  if(fcntl(new, F_SETFL, O_NONBLOCK) < 0){
+    perror("fcntl - setting O_NONBLOCK");
     close(new);
     return;
   }
@@ -228,10 +230,12 @@ int main(int argc, char **argv)
 {
   int connect_fd, data_fd, n, one = 1;
 
-  if(!strcmp(argv[1], "-unix")){
-    if(argc < 4) Usage();
-    ctl_socket = argv[2];
-    data_socket = argv[3];
+  if(argc > 1){
+    if(!strcmp(argv[1], "-unix")){
+      if(argc < 4) Usage();
+      ctl_socket = argv[2];
+      data_socket = argv[3];
+    }
   }
   
   if((connect_fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0){
@@ -243,6 +247,10 @@ int main(int argc, char **argv)
     perror("setsockopt");
     exit(1);
   }
+  if(fcntl(connect_fd, F_SETFL, O_NONBLOCK) < 0){
+    perror("Setting O_NONBLOCK on connection fd");
+    exit(1);
+  }
   bind_socket(connect_fd, ctl_socket);
   if(listen(connect_fd, 15) < 0){
     perror("listen");
@@ -250,6 +258,10 @@ int main(int argc, char **argv)
   }
   if((data_fd = socket(PF_UNIX, SOCK_DGRAM, 0)) < 0){
     perror("socket");
+    exit(1);
+  }
+  if(fcntl(data_fd, F_SETFL, O_NONBLOCK) < 0){
+    perror("Setting O_NONBLOCK on data fd");
     exit(1);
   }
   bind_socket(data_fd, data_socket);
