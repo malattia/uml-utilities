@@ -76,7 +76,7 @@ static void service_connection(struct connection *conn)
 
 static int match_addr(unsigned char *host, unsigned char *packet)
 {
-  if((packet[0] % 2) == 1) return(1);
+  if(packet[0] & 1) return(1);
   return((packet[0] == host[0]) && (packet[1] == host[1]) && 
 	 (packet[2] == host[2]) && (packet[3] == host[3]) && 
 	 (packet[4] == host[4]) && (packet[5] == host[5]));
@@ -86,7 +86,7 @@ static void handle_data(int fd)
 {
   struct packet p;
   struct connection *c, *next;
-  int len, n;
+  int len;
 
   len = recvfrom(fd, &p, sizeof(p), 0, NULL, 0);
   if(len < 0){
@@ -96,10 +96,7 @@ static void handle_data(int fd)
   for(c = head; c != NULL; c = next){
     next = c->next;
     if(match_addr(c->addr, p.header.dest)){
-      n = sendto(fd, &p, len, 0, &c->name, sizeof(c->name));
-      if(n != len){
-	free_connection(c);
-      }
+      sendto(fd, &p, len, 0, (struct sockaddr *) &c->name, sizeof(c->name));
     }
   }
 }
@@ -185,7 +182,7 @@ int still_used(struct sockaddr_un *sun)
     perror("socket");
     exit(1);
   }
-  if(connect(test_fd, sun, sizeof(*sun)) < 0){
+  if(connect(test_fd, (struct sockaddr *) sun, sizeof(*sun)) < 0){
     if(errno == ECONNREFUSED){
       if(unlink(sun->sun_path) < 0){
 	fprintf(stderr, "Failed to removed unused socket '%s':", 
