@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <sys/poll.h>
 
@@ -25,17 +26,32 @@ struct connection {
 
 enum request_type { REQ_NEW_CONTROL };
 
-struct request {
+struct request_v0 {
   enum request_type type;
   union {
     struct {
       unsigned char addr[ETH_ALEN];
       struct sockaddr_un name;
     } new_control;
-    struct {
-      unsigned long cookie;
-    } new_data;
   } u;
+};
+
+#define SWITCH_MAGIC 0xfeedface
+
+struct request_v1 {
+  unsigned long magic;
+  enum request_type type;
+  union {
+    struct {
+      unsigned char addr[ETH_ALEN];
+      struct sockaddr_un name;
+    } new_control;
+  } u;
+};
+
+union request {
+  struct request_v0 v0;
+  struct request_v1 v1;
 };
 
 struct packet {
@@ -50,7 +66,9 @@ struct packet {
 static struct connection *head = NULL;
 
 static char *ctl_socket = "/tmp/uml.ctl";
-static char *data_socket = "/tmp/uml.data";
+
+static char *data_socket = NULL;
+static struct sockaddr_un data_sun;
 
 static void cleanup(void)
 {
@@ -58,7 +76,7 @@ static void cleanup(void)
     printf("Couldn't remove control socket '%s' : ", ctl_socket);
     perror("");
   }
-  if(unlink(data_socket) < 0){
+  if((data_socket != NULL) && (unlink(data_socket) < 0)){
     printf("Couldn't remove data socket '%s' : ", data_socket);
     perror("");
   }
@@ -122,9 +140,29 @@ static void free_connection(struct connection *conn)
   free(conn);
 }
 
+static void service_connection_v0(struct connection *conn, 
+				  struct request_v0 *req)
+{
+  switch(req->type){
+  default:
+    printf("Bad request type : %d\n", req->type);
+    free_connection(conn);
+  }
+}
+
+static void service_connection_v1(struct connection *conn, 
+				  struct request_v1 *req)
+{
+  switch(req->type){
+  default:
+    printf("Bad request type : %d\n", req->type);
+    free_connection(conn);
+  }
+}
+
 static void service_connection(struct connection *conn)
 {
-  struct request req;
+  union request req;
   int n;
 
   n = read(conn->control, &req, sizeof(req));
@@ -139,15 +177,13 @@ static void service_connection(struct connection *conn)
 	   conn->addr[4], conn->addr[5]);
     free_connection(conn);
     return;
-  }    
-  switch(req.type){
-  default:
-    printf("Bad request type : %d\n", req.type);
-    free_connection(conn);
   }
+  if(req.v1.magic == SWITCH_MAGIC) service_connection_v1(conn, &req.v1);
+  else service_connection_v0(conn, &req.v0);
 }
 
 static int hub = 0;
+static int compat_v0 = 0;
 
 static int match_addr(unsigned char *host, unsigned char *packet)
 {
@@ -177,9 +213,69 @@ static void handle_data(int fd)
   }
 }
 
+static struct connection * setup_connection(int fd, unsigned char *mac, 
+					    struct sockaddr_un *name)
+{
+  struct connection *conn;
+
+  conn = malloc(sizeof(struct connection));
+  if(conn == NULL){
+    perror("malloc");
+    close_descriptor(fd);
+    return(NULL);
+  }
+  conn->next = head;
+  if(head) head->prev = conn;
+  conn->prev = NULL;
+  conn->control = fd;
+  memcpy(conn->addr, mac, sizeof(conn->addr));
+  conn->name = *name;
+  head = conn;
+  printf("New connection - hw address %02x:%02x:%02x:%02x:%02x:%02x\n",
+	 conn->addr[0], conn->addr[1], conn->addr[2], conn->addr[3], 
+	 conn->addr[4], conn->addr[5]);
+  return(conn);
+}
+
+static void new_connection_v0(int fd, struct connection *conn, 
+			      struct request_v0 *req)
+{
+  switch(req->type){
+  case REQ_NEW_CONTROL:
+    setup_connection(fd, req->u.new_control.addr, &req->u.new_control.name);
+    break;
+  default:
+    printf("Bad request type : %d\n", req->type);
+    close_descriptor(fd);
+  }
+}
+
+static void new_connection_v1(int fd, struct connection *conn, 
+			      struct request_v1 *req)
+{
+  struct connection *new;
+  int n;
+
+  switch(req->type){
+  case REQ_NEW_CONTROL:
+    new = setup_connection(fd, req->u.new_control.addr, 
+			   &req->u.new_control.name);
+    if(new == NULL) return;
+    n = write(fd, &data_sun, sizeof(data_sun));
+    if(n != sizeof(data_sun)){
+      perror("Sending data socket name");
+      free_connection(new);
+    }
+    break;
+  default:
+    printf("Bad request type : %d\n", req->type);
+    close_descriptor(fd);
+  }
+}
+
 static void new_connection(int fd)
 {
-  struct request req;
+  union request req;
   struct connection *conn;
   int len;
 
@@ -196,29 +292,8 @@ static void new_connection(int fd)
     close_descriptor(fd);
     return;
   }
-  switch(req.type){
-  case REQ_NEW_CONTROL:
-    conn = malloc(sizeof(struct connection));
-    if(conn == NULL){
-      perror("malloc");
-      close_descriptor(fd);
-      return;
-    }
-    conn->next = head;
-    if(head) head->prev = conn;
-    conn->prev = NULL;
-    conn->control = fd;
-    memcpy(conn->addr, req.u.new_control.addr, sizeof(conn->addr));
-    conn->name = req.u.new_control.name;
-    head = conn;
-    printf("New connection - hw address %02x:%02x:%02x:%02x:%02x:%02x\n",
-	   conn->addr[0], conn->addr[1], conn->addr[2], conn->addr[3], 
-	   conn->addr[4], conn->addr[5]);
-    break;
-  default:
-    printf("Bad request type : %d\n", req.type);
-    close_descriptor(fd);
-  }
+  if(req.v1.magic == SWITCH_MAGIC) new_connection_v1(fd, conn, &req.v1);
+  else new_connection_v0(fd, conn, &req.v0);
 }
 
 void handle_connection(int fd)
@@ -295,8 +370,8 @@ int bind_socket(int fd, const char *name)
 
 static char *prog;
 
-void bind_sockets(int ctl_fd, const char *ctl_name, 
-		  int data_fd, const char *data_name)
+void bind_sockets_v0(int ctl_fd, const char *ctl_name, 
+		     int data_fd, const char *data_name)
 {
   int ctl_err, ctl_present = 0, ctl_used = 0;
   int data_err, data_present = 0, data_used = 0;
@@ -311,9 +386,6 @@ void bind_sockets(int ctl_fd, const char *ctl_name,
   if(data_err == EADDRINUSE) data_used = 1;
 
   if(!ctl_err && !data_err) return;
-
-  unlink(ctl_name);
-  unlink(data_name);
 
   try_remove_ctl = ctl_present;
   try_remove_data = data_present;
@@ -357,10 +429,57 @@ void bind_sockets(int ctl_fd, const char *ctl_name,
   }
 }
 
+void bind_data_socket(int fd, struct sockaddr_un *sun)
+{
+  struct {
+    char zero;
+    int pid;
+    int usecs;
+  } name;
+  struct timeval tv;
+
+  name.zero = 0;
+  name.pid = getpid();
+  gettimeofday(&tv, NULL);
+  name.usecs = tv.tv_usec;
+  sun->sun_family = AF_UNIX;
+  memcpy(sun->sun_path, &name, sizeof(name));
+  if(bind(fd, (struct sockaddr *) sun, sizeof(*sun)) < 0){
+    perror("Binding to data socket");
+    exit(1);
+  }
+}
+
+void bind_sockets(int ctl_fd, const char *ctl_name, int data_fd)
+{
+  int err, used;
+
+  err = bind_socket(ctl_fd, ctl_name);
+  if(err == 0){
+    bind_data_socket(data_fd, &data_sun);
+    return;
+  }
+  else if(err == EADDRINUSE) used = 1;
+  
+  if(used){
+    fprintf(stderr, "The control socket '%s' has another server "
+	    "attached to it\n", ctl_name);
+    fprintf(stderr, "You can either\n");
+    fprintf(stderr, "\tremove '%s'\n", ctl_name);
+    fprintf(stderr, "\tor rerun with a different, unused filename for a "
+	    "socket\n");
+  }
+  else
+    fprintf(stderr, "The control socket '%s' exists, isn't used, but couldn't "
+	    "be removed\n", ctl_name);
+  exit(1);
+}
+
 static void Usage(void)
 {
-  fprintf(stderr, "Usage : %s [-unix control-socket data-socket] [-hub]\n", 
-	  prog);
+  fprintf(stderr, "Usage : %s [ -unix control-socket ] [ -hub ]\n"
+	  "or : %s -compat-v0 [ -unix control-socket data-socket ] "
+	  "[ -hub ]\n", prog, prog);
   exit(1);
 }
 
@@ -373,11 +492,15 @@ int main(int argc, char **argv)
   argc--;
   while(argc > 0){
     if(!strcmp(argv[0], "-unix")){
-      if(argc < 3) Usage();
+      if(argc < 2) Usage();
       ctl_socket = argv[1];
-      data_socket = argv[2];
-      argc -= 3;
-      argv += 3;
+      argc -= 2;
+      argv += 2;
+      if(!compat_v0) break;
+      if(argc < 1) Usage();
+      data_socket = argv[0];
+      argc--;
+      argv++;
     }
     else if(!strcmp(argv[0], "-hub")){
       printf("%s will be a hub instead of a switch\n", prog);
@@ -385,6 +508,14 @@ int main(int argc, char **argv)
       argc--;
       argv++;
     }
+    else if(!strcmp(argv[0], "-compat-v0")){
+      printf("Control protocol 0 compatibility\n");
+      compat_v0 = 1;
+      data_socket = "/tmp/uml.data";
+      argc--;
+      argv++;
+    }
+    else Usage();
   }
   
   if((connect_fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0){
@@ -409,7 +540,8 @@ int main(int argc, char **argv)
     exit(1);
   }
 
-  bind_sockets(connect_fd, ctl_socket, data_fd, data_socket);
+  if(compat_v0) bind_sockets_v0(connect_fd, ctl_socket, data_fd, data_socket);
+  else bind_sockets(connect_fd, ctl_socket, data_fd);
 
   if(listen(connect_fd, 15) < 0){
     perror("listen");
@@ -419,8 +551,11 @@ int main(int argc, char **argv)
   if(signal(SIGINT, sig_handler) < 0)
     perror("Setting handler for SIGINT");
 
-  printf("%s attached to unix sockets '%s' and '%s'\n", prog, ctl_socket,
-	 data_socket);
+  if(compat_v0) 
+    printf("%s attached to unix sockets '%s' and '%s'\n", prog, ctl_socket,
+	   data_socket);
+  else printf("%s attached to unix socket '%s'\n", prog, ctl_socket);
+
   if(isatty(0)) add_fd(0);
   add_fd(connect_fd);
   add_fd(data_fd);
@@ -429,6 +564,7 @@ int main(int argc, char **argv)
 
     n = poll(fds, nfds, -1);
     if(n < 0){
+      if(errno == EINTR) continue;
       perror("poll");
       break;
     }
