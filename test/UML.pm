@@ -1,6 +1,7 @@
 package UML;
 
 use Expect;
+use IO::File;
 use strict;
 
 sub new {
@@ -52,6 +53,8 @@ sub new {
 
 sub boot {
     my $me = shift;
+    my $log_file = shift;
+    my $log;
 
     if(defined($me->{expect_handle})){
 	warn "UML::boot : already booted";
@@ -59,19 +62,86 @@ sub boot {
     }
     my $cmd = "$me->{kernel} $me->{arguments}";
     $me->{expect_handle} = Expect->spawn($cmd);
+    if(defined($log_file)){
+	$log = $me->open_log($log_file);
+	$me->{expect_handle}->log_stdout(0);
+    }
     $me->{expect_handle}->expect(undef, "$me->{login_prompt}");
     $me->{expect_handle}->print("$me->{login}\n");
     $me->{expect_handle}->expect(undef, "$me->{password_prompt}");
     $me->{expect_handle}->print("$me->{password}\n");
     $me->{expect_handle}->expect(undef, "-re", "$me->{prompt}");
+    return($log);
 }
 
 sub command {
     my $me = shift;
     my $cmd = shift;
+    my %globals = ( "Kernel panic" => "", "$me->{prompt}" => "-re" );
+    my @expects = ( @_ );
+    my @strings = ();
 
+    foreach my $key (keys(%globals)){
+	$globals{$key} eq "-re" and push @expects, "-re";
+	push @expects, $key;
+    }
+    foreach my $str (@expects){
+	$str ne "-re" and push @strings, $str;
+    }
     $me->{expect_handle}->print("$cmd\n");
-    $me->{expect_handle}->expect(undef, "-re", "$me->{prompt}");
+    my @match = $me->{expect_handle}->expect(undef, @expects);
+    defined $match[0] and $match[0]--;
+    if(defined($match[1])){
+	die "Expect error : $match[1]";
+    }
+    elsif(defined($globals{$strings[$match[0]]})){
+	$strings[$match[0]] eq "Kernel panic" and die "panic";
+	return(undef);
+    }
+    else {
+	$me->{expect_handle}->expect(undef, "-re", "$me->{prompt}");
+	return($match[0]);
+    }
+}
+
+sub open_log {
+    my $me = shift;
+    my $file = shift;
+    my $fh = new IO::File "$file";
+    my $have_logs = $me->{expect_handle}->set_group();
+    my @logs;
+
+    if(!defined($have_logs)){
+	@logs = ();
+    }
+    else {
+	@logs = $me->{expect_handle}->set_group();
+    }
+    if(defined($fh)){
+	my $log = Expect->exp_init(\*$fh);
+	push @logs, $log;
+	$me->{expect_handle}->set_group(@logs);
+	return $log;
+    }
+    return undef;
+}
+
+sub close_log {
+    my $me = shift;
+    my $log = shift;
+    my @logs = $me->{expect_handle}->set_group();
+
+    foreach my $i (0..$#logs){
+	if($logs[$i] == $log){
+	    splice @logs, $i, 1;
+	    $log->hard_close();
+	}
+    }
+    if(!@logs){
+	my $fh = new IO::File "> /dev/null";
+	push @logs, Expect->exp_init(\*$fh);
+    }
+    $me->{expect_handle}->set_group(@logs);
 }
 
 sub halt {
@@ -79,6 +149,12 @@ sub halt {
 
     $me->{expect_handle}->print("$me->{halt}\n");
     $me->{expect_handle}->expect(undef);
+}
+
+sub kill {
+    my $me = shift;
+
+    $me->{expect_handle}->hard_close();
 }
 
 1;
