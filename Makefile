@@ -1,4 +1,4 @@
-SUBDIRS = jailtest mconsole moo port-helper redhat tunctl uml_net uml_router 
+SUBDIRS = jailtest mconsole moo port-helper tunctl uml_net uml_router 
 UMLVER = $(shell date +%Y%m%d)
 TARBALL = uml_utilities_$(UMLVER).tar
 BIN_DIR = /usr/bin
