@@ -47,12 +47,41 @@ static void fail(int fd)
   exit(1);
 }
 
+static void write_output(int fd, struct output *output)
+{
+  if(output == NULL) return;
+  if(write(fd, &output->used, sizeof(output->used)) != sizeof(output->used)){
+    perror("output_fail : write of length failed");
+    exit(1);
+  }
+  if(write(fd, output->buffer, output->used) != output->used){
+    perror("output_fail : write of data failed");
+    exit(1);
+  }
+  output->used = 0;
+}
+
+static void output_fail(struct output *output, int fd)
+{
+  if(output == NULL) fail(fd);
+  write_output(fd, output);
+  exit(1);
+}
+
 static void add_output(struct output *output, char *new, int len)
 {
-  if(len == -1) len = strlen(new) + 1;
-  else len++;
-  if(output->used + len > output->total){
-    output->total = output->used + len;
+  int n, start;
+
+  if(output == NULL){
+    fprintf(stderr, "%s", new);
+    return;
+  }
+
+  if(len == -1) len = strlen(new);
+  n = len;
+  if(output->used == 0) n++;
+  if(output->used + n > output->total){
+    output->total = output->used + n;
     output->total = (output->total + 4095) & ~4095;
     if(output->buffer == NULL){
       if((output->buffer = malloc(output->total)) == NULL){
@@ -67,16 +96,21 @@ static void add_output(struct output *output, char *new, int len)
 	return;
     }
   }
-  strncpy(&output->buffer[output->used], new, len - 1);
-  output->used += len - 1;
-  output->buffer[output->used] = '\0';
+  if(output->used == 0) start = 0;
+  else start = output->used - 1;
+  strncpy(&output->buffer[start], new, len);
+  output->used += n;
+  output->buffer[output->used - 1] = '\0';
 }
 
 static void output_errno(struct output *output, char *str)
 {
+  if(output == NULL) perror(str);
+  else {
     add_output(output, str, -1);
     add_output(output, strerror(errno), -1);
     add_output(output, "\n", -1);
+  }
 }
 
 static int do_exec(char **args, int need_zero, struct output *output)
@@ -126,7 +160,7 @@ static int do_exec(char **args, int need_zero, struct output *output)
   return(0);
 }
 
-static int maybe_insmod(char *dev)
+static int maybe_insmod(char *dev, struct output *output)
 {
   struct ifreq ifr;
   int fd, unit;
@@ -135,25 +169,27 @@ static int maybe_insmod(char *dev)
   char *ethertap_argv[] = { "insmod", "ethertap", unit_buf, "-o", ethertap_buf,
 			    NULL };
   char *netlink_argv[] = { "insmod", "netlink_dev", NULL };
+  char buf[256];
   
   if((fd = socket(PF_INET, SOCK_DGRAM, 0)) < 0){
-    perror("socket");
+    output_errno(output, "socket");
     return(-1);
   }
   strcpy(ifr.ifr_name, dev);
   if(ioctl(fd, SIOCGIFFLAGS, &ifr) == 0) return(0);
   if(errno != ENODEV){
-    perror("SIOCGIFFLAGS on tap device");
+    output_errno(output, "SIOCGIFFLAGS on tap device");
     return(-1);
   }
   if(sscanf(dev, "tap%d", &unit) != 1){
-    fprintf(stderr, "failed to get unit number from '%s'\n", dev);
+    snprintf(buf, sizeof(buf), "failed to get unit number from '%s'\n", dev);
+    add_output(output, buf, -1);
     return(-1);
   }
   sprintf(unit_buf, "unit=%d", unit);
   sprintf(ethertap_buf, "ethertap%d", unit);
-  do_exec(netlink_argv, 0, NULL);
-  return(do_exec(ethertap_argv, 0, NULL));
+  do_exec(netlink_argv, 0, output);
+  return(do_exec(ethertap_argv, 0, output));
 }
 
 /* This is a routine to do a 'mknod' on the /dev/tap<n> if possible:
@@ -195,16 +231,16 @@ static int route_and_arp(char *dev, char *addr, int need_route,
   return(0);
 }
 
-static int no_route_and_arp(char *dev, char *addr)
+static int no_route_and_arp(char *dev, char *addr, struct output *output)
 {
   char echo[sizeof("echo 0 > /proc/sys/net/ipv4/conf/XXXXXXXXXX/proxy_arp")];
   char *no_arp_argv[] = { "bash", "-c", echo, NULL };
   char *no_route_argv[] = { "route", "del", "-host", addr, "dev", dev, NULL };
 
-  do_exec(no_route_argv, 0, NULL);
+  do_exec(no_route_argv, 0, output);
   snprintf(echo, sizeof(echo), 
 	   "echo 0 > /proc/sys/net/ipv4/conf/%s/proxy_arp", dev);
-  do_exec(no_arp_argv, 0, NULL);
+  do_exec(no_arp_argv, 0, output);
   return(0);
 }
 
@@ -220,7 +256,8 @@ struct addr_change {
 	unsigned char addr[4];
 };
 
-static void address_change(struct addr_change *change, char *dev)
+static void address_change(struct addr_change *change, char *dev, 
+			   struct output *output)
 {
   char addr[sizeof("255.255.255.255\0")];
 
@@ -228,10 +265,10 @@ static void address_change(struct addr_change *change, char *dev)
 	  change->addr[2], change->addr[3]);
   switch(change->what){
   case ADD_ADDR:
-    route_and_arp(dev, addr, 0, NULL);
+    route_and_arp(dev, addr, 0, output);
     break;
   case DEL_ADDR:
-    no_route_and_arp(dev, addr);
+    no_route_and_arp(dev, addr, output);
     break;
   default:
     fprintf(stderr, "address_change - bad op : %d\n", change->what);
@@ -244,54 +281,57 @@ static void address_change(struct addr_change *change, char *dev)
 #define max(i, j) (((i) > (j)) ? (i) : (j))
 
 static void ethertap(char *dev, int data_fd, int control_fd, char *gate, 
-		     char *remote)
+		     char *remote, int collect_output)
 {
+  struct output output = INIT_OUTPUT, *o = NULL;
   int ip[4];
-
   char *ifconfig_argv[] = { "ifconfig", dev, "arp", "mtu", "1500", gate,
 			    "netmask", "255.255.255.255", "up", NULL };
   char *down_argv[] = { "ifconfig", dev, "0.0.0.0", "down", NULL };
-  char dev_file[sizeof("/dev/tapxxxx\0")], c;
+  char dev_file[sizeof("/dev/tapxxxx\0")], buf[256], c;
   int tap, minor;
 
+  if(collect_output) o = &output;
   signal(SIGHUP, SIG_IGN);
   if(setreuid(0, 0) < 0){
-    perror("setreuid");
-    fail(control_fd);
+    output_errno(o, "setreuid");
+    output_fail(o, control_fd);
   }
   if(gate != NULL){
     sscanf(gate, "%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
-    if(maybe_insmod(dev)) fail(control_fd);
+    if(maybe_insmod(dev, o)) output_fail(o, control_fd);
 
-    if(do_exec(ifconfig_argv, 1, NULL)) fail(control_fd);
+    if(do_exec(ifconfig_argv, 1, o)) output_fail(o, control_fd);
 
-    if((remote != NULL) && route_and_arp(dev, remote, 1, NULL)) 
-      fail(control_fd);
+    if((remote != NULL) && route_and_arp(dev, remote, 1, o)) 
+      output_fail(o, control_fd);
 
-    forward_ip(NULL);
-
+    forward_ip(o);
   }
   sprintf(dev_file, "/dev/%s", dev);
 
-/* do a mknod on it in case it doesn't exist. */
+  /* do a mknod on it in case it doesn't exist. */
 
   if(sscanf(dev_file, "/dev/tap%d", &minor) != 1){
-    fprintf(stderr, "failed to get unit number from '%s'\n", dev_file);
-    fail(control_fd);
+    snprintf(buf, sizeof(buf), "failed to get unit number from '%s'\n", 
+	     dev_file);
+    add_output(o, buf, -1);
+    output_fail(o, control_fd);
   }
   minor += TAP_MINOR;
   mk_node(dev_file, TAP_MAJOR, minor); 
 
   if((tap = open(dev_file, O_RDWR | O_NONBLOCK)) < 0){
-    perror("open");
-    fail(control_fd);
+    output_errno(o, "open");
+    output_fail(o, control_fd);
   }
 
   c = 1;
   if(write(control_fd, &c, sizeof(c)) != sizeof(c)){
-    perror("write");
-    fail(control_fd);
+    output_errno(o, "write");
+    output_fail(o, control_fd);
   }
+  write_output(control_fd, o);
 
   while(1){
     fd_set fds, except;
@@ -330,19 +370,19 @@ static void ethertap(char *dev, int data_fd, int control_fd, char *gate,
     }
     else if(FD_ISSET(control_fd, &fds)){
       struct addr_change change;
-
       n = read(control_fd, &change, sizeof(change));
-      if(n == sizeof(change)) address_change(&change, dev);
+      if(n == sizeof(change)) address_change(&change, dev, o);
       else if(n == 0) break;
       else {
 	fprintf(stderr, "read from UML failed, n = %d, errno = %d\n", n, 
 		errno);
 	break;
       }
+      if(o) write_output(control_fd, o);
     }
   }
   if(gate != NULL) do_exec(down_argv, 0, NULL);
-  if(remote != NULL) no_route_and_arp(dev, remote);
+  if(remote != NULL) no_route_and_arp(dev, remote, NULL);
 }
 
 static void ethertap_v0(int argc, char **argv)
@@ -356,7 +396,7 @@ static void ethertap_v0(int argc, char **argv)
     gate_addr = argv[2];
     remote_addr = argv[3];
   }
-  ethertap(dev, fd, fd, gate_addr, remote_addr);
+  ethertap(dev, fd, fd, gate_addr, remote_addr, 0);
 }
 
 static void ethertap_v1_v2(int argc, char **argv)
@@ -367,10 +407,20 @@ static void ethertap_v1_v2(int argc, char **argv)
   char *gate_addr = NULL;
 
   if(argc > 3) gate_addr = argv[3];
-  ethertap(dev, data_fd, control_fd, gate_addr, NULL);
+  ethertap(dev, data_fd, control_fd, gate_addr, NULL, 0);
 }
 
-static void slip_up(char **argv)
+static void ethertap_v3(int argc, char **argv)
+{
+  char *dev = argv[0];
+  int data_fd = atoi(argv[1]);
+  char *gate_addr = NULL;
+
+  if(argc > 2) gate_addr = argv[2];
+  ethertap(dev, data_fd, 1, gate_addr, NULL, 1);
+}
+
+static void slip_up(char **argv, struct output *output)
 {
   int fd = atoi(argv[0]);
   char *gate_addr = argv[1];
@@ -382,21 +432,27 @@ static void slip_up(char **argv)
   
   disc = N_SLIP;
   if((n = ioctl(fd, TIOCSETD, &disc)) < 0){
-    perror("Setting slip line discipline");
+    output_errno(output, "Setting slip line discipline");
+    write_output(1, output);
     exit(1);
   }
   sencap = 0;
   if(ioctl(fd, SIOCSIFENCAP, &sencap) < 0){
-    perror("Setting slip encapsulation");
+    output_errno(output, "Setting slip encapsulation");
+    write_output(1, output);
     exit(1);
   }
   sprintf(slip_name, "sl%d", n);
-  if(do_exec(up_argv, 1, NULL)) exit(1);
-  route_and_arp(slip_name, remote_addr, 0, NULL);
-  forward_ip(NULL);
+  if(do_exec(up_argv, 1, output)){
+    write_output(1, output);
+    exit(1);
+  }
+  route_and_arp(slip_name, remote_addr, 0, output);
+  forward_ip(output);
+  write_output(1, output);
 }
 
-static void slip_down(char **argv)
+static void slip_down(char **argv, struct output *output)
 {
   int fd = atoi(argv[0]);
   char *remote_addr = argv[1];
@@ -405,20 +461,48 @@ static void slip_down(char **argv)
   int n, disc;
 
   if((n = ioctl(fd, TIOCGETD, &disc)) < 0){
-    perror("Getting slip line discipline");
+    output_errno(output, "Getting slip line discipline");
+    write_output(1, output);
     exit(1);
   }
   sprintf(slip_name, "sl%d", n);
-  no_route_and_arp(slip_name, remote_addr);
-  if(do_exec(down_argv, 1, NULL)) exit(1);
+  no_route_and_arp(slip_name, remote_addr, output);
+  if(do_exec(down_argv, 1, output)){
+    write_output(1, output);
+    exit(1);
+  }
+  write_output(1, output);
 }
 
 static void slip_v0_v2(int argc, char **argv)
 {
   char *op = argv[0];
 
-  if(!strcmp(argv[0], "up")) slip_up(&argv[1]);
-  else if(!strcmp(argv[0], "down")) slip_down(&argv[1]);
+  if(setreuid(0, 0) < 0){
+    perror("slip - setreuid failed");
+    exit(1);
+  }
+
+  if(!strcmp(argv[0], "up")) slip_up(&argv[1], NULL);
+  else if(!strcmp(argv[0], "down")) slip_down(&argv[1], NULL);
+  else {
+    printf("slip - Unknown op '%s'\n", op);
+    exit(1);
+  }
+}
+
+static void slip_v3(int argc, char **argv)
+{
+  struct output output = INIT_OUTPUT;
+  char *op = argv[0];
+
+  if(setreuid(0, 0) < 0){
+    perror("slip - setreuid failed");
+    exit(1);
+  }
+
+  if(!strcmp(argv[0], "up")) slip_up(&argv[1], &output);
+  else if(!strcmp(argv[0], "down")) slip_down(&argv[1], &output);
   else {
     printf("slip - Unknown op '%s'\n", op);
     exit(1);
@@ -426,14 +510,11 @@ static void slip_v0_v2(int argc, char **argv)
 }
 
 #ifdef TUNTAP
-static void tuntap_up(int argc, char **argv)
+static void tuntap_up(char *dev, int fd, char *gate_addr)
 {
   struct ifreq ifr;
   int tap_fd, *fd_ptr;
   char anc[CMSG_SPACE(sizeof(tap_fd))];
-  char *dev = argv[0];
-  int uml_fd = atoi(argv[1]);
-  char *gate_addr = argv[2];
   struct msghdr msg;
   struct cmsghdr *cmsg;
   char *ifconfig_argv[] = { "ifconfig", ifr.ifr_name, gate_addr, "netmask", 
@@ -500,13 +581,13 @@ static void tuntap_up(int argc, char **argv)
   msg.msg_iovlen = sizeof(iov)/sizeof(iov[0]);
   msg.msg_flags = 0;
 
-  if(sendmsg(uml_fd, &msg, 0) < 0){
+  if(sendmsg(fd, &msg, 0) < 0){
     perror("sendmsg");
     exit(1);
   }
 }
 
-static void tuntap_change(int argc, char **argv)
+static void tuntap_change(int argc, char **argv, struct output *output)
 {
   char *op = argv[0];
   char *dev = argv[1];
@@ -516,20 +597,37 @@ static void tuntap_change(int argc, char **argv)
     perror("setreuid");
     exit(1);
   }
-  if(!strcmp(op, "add")) route_and_arp(dev, address, 0, NULL);
-  else no_route_and_arp(dev, address);
+  if(!strcmp(op, "add")) route_and_arp(dev, address, 0, output);
+  else no_route_and_arp(dev, address, output);
 }
 
 static void tuntap_v2(int argc, char **argv)
 {
   char *op = argv[0];
 
-  if(!strcmp(op, "up")) tuntap_up(argc - 1, argv + 1);
-  else if(!strcmp(op, "add") || !strcmp(op, "del")) tuntap_change(argc, argv);
+  if(!strcmp(op, "up")) tuntap_up(argv[1], atoi(argv[2]), argv[3]);
+  else if(!strcmp(op, "add") || !strcmp(op, "del"))
+    tuntap_change(argc, argv, NULL);
   else {
     fprintf(stderr, "Bad tuntap op : '%s'\n", op);
     exit(1);
   }
+}
+
+static void tuntap_v3(int argc, char **argv)
+{
+  char *op = argv[0];
+  struct output output = INIT_OUTPUT;
+
+  if(!strcmp(op, "up")) tuntap_up(argv[1], 1, argv[2]);
+  else if(!strcmp(op, "add") || !strcmp(op, "del"))
+    tuntap_change(argc, argv, &output);
+  else {
+    fprintf(stderr, "Bad tuntap op : '%s'\n", op);
+    exit(1);
+  }
+  write(1, &output.used, sizeof(output.used));
+  write(1, output.buffer, output.used);
 }
 #endif
 
@@ -538,20 +636,23 @@ static void tuntap_v2(int argc, char **argv)
 void (*ethertap_handlers[])(int argc, char **argv) = {
   ethertap_v0, 
   ethertap_v1_v2,
-  ethertap_v1_v2
+  ethertap_v1_v2,
+  ethertap_v3,
 };
 
 void (*slip_handlers[])(int argc, char **argv) = { 
   slip_v0_v2, 
   slip_v0_v2,
   slip_v0_v2, 
+  slip_v3, 
 };
 
 #ifdef TUNTAP
 void (*tuntap_handlers[])(int argc, char **argv) = {
   NULL,
   NULL,
-  tuntap_v2
+  tuntap_v2,
+  tuntap_v3,
 };
 #endif
 
@@ -563,6 +664,13 @@ int main(int argc, char **argv)
   char *out;
   int n = 3, v;
 
+  if(argc < 3){
+    fprintf(stderr, 
+	    "uml_net : bad argument list - if you're running uml_net by\n"
+	    "hand, don't bother.  uml_net is run automatically by UML when\n"
+	    "necessary.\n");
+    exit(1);
+  }
   setenv("PATH", "/bin:/usr/bin:/sbin:/usr/sbin", 1);
   v = strtoul(version, &out, 0);
   if(out != version){
