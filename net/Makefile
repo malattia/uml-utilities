@@ -1,5 +1,8 @@
 CC = gcc
-CFLAGS = -Wall -ggdb -DTUNTAP
+
+# 2.4 kernels should include -DTUNTAP first
+# 2.2 kernel (and some 2.4 kernel) should leave off -DTUNTAP
+CFLAGS = -Wall -ggdb
 
 all: um_eth_serv um_eth_tool
 
