@@ -72,6 +72,7 @@ sub on_public {
     elsif(defined($key) && ($arg eq $key)){
 	$self->me("#umldebug", "trusts $nick");
 	$trust{$nick} = 1;
+	$key = undef;
     }
     elsif($trust{$nick} == 1){
 	if($arg =~ /trust (.*)/){
@@ -91,6 +92,12 @@ sub gdb_output {
     while(<$pty>){
 	$conn->privmsg("#umldebug", "$_");
     }
+}
+
+sub on_msg {
+    my ($self, $event) = @_;
+    my $nick = $event->nick;
+    $self->privmsg($nick, "Sorry, I don't understand messages yet.");
 }
 
 $conn->add_global_handler(376, \&on_connect);
