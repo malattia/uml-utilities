@@ -156,6 +156,8 @@ static void sig_alarm(int sig)
 
   it.it_value.tv_sec = GC_INTERVAL;
   it.it_value.tv_usec = 0 ;
+  it.it_interval.tv_sec = 0;
+  it.it_interval.tv_usec = 0 ;
   setitimer(ITIMER_REAL, &it, NULL);
 }
 
