@@ -1,7 +1,7 @@
 TUNCTL = $(shell [ -e /usr/include/linux/if_tun.h ] && echo tunctl)
 
-SUBDIRS = jail jailtest mconsole moo port-helper $(TUNCTL) uml_net uml_router \
-	watchdog
+SUBDIRS = jail jailtest humfsify mconsole moo port-helper $(TUNCTL) uml_net \
+	uml_router watchdog
 UMLVER = $(shell date +%Y%m%d)
 TARBALL = uml_utilities_$(UMLVER).tar
 BIN_DIR = /usr/bin
