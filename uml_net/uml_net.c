@@ -195,7 +195,10 @@ static void ethertap(int argc, char **argv)
     if(FD_ISSET(tap, &fds)){
       n = read(tap, buf, sizeof(buf));
       if(n == 0) break;
-      else if(n < 0) perror("read");
+      else if(n < 0){
+	perror("read");
+	continue;
+      }
       n = send(fd, buf, n, 0);
       if((n < 0) && (errno != EAGAIN)){
 	perror("send");
@@ -209,7 +212,6 @@ static void ethertap(int argc, char **argv)
       n = write(tap, buf, n);
       if(n < 0) perror("write");      
     }
-    else continue;
   }
   do_exec(down_argv, 0);
   do_exec(no_arp_argv, 0);
