@@ -1,3 +1,8 @@
+# 
+# Copyright (C) 2001 Jeff Dike (jdike@karaya.com)
+# Licensed under the GPL
+#
+
 package UML;
 
 use Expect;
