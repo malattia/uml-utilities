@@ -86,7 +86,8 @@ static int maybe_insmod(char *dev)
 
 /* This is a routine to do a 'mknod' on the /dev/tap<n> if possible:
  * Return: 0 is ok, -1=already open, etc.
-  */
+ */
+
 static int mk_node(char *devname)
 {
   struct stat statval;
@@ -125,10 +126,44 @@ static int mk_node(char *devname)
 
 #define BUF_SIZE 1500
 
-static void ethertap(int argc, char **argv)
+struct addr_change {
+	enum { ADD_ADDR, DEL_ADDR } what;
+	unsigned char addr[4];
+};
+
+static void address_change(struct addr_change *change, char *dev)
 {
-  char *dev = argv[0];
-  int fd = atoi(argv[1]);
+  char addr[sizeof("255.255.255.255\0")];
+  char *arp_argv[] = { "arp", "-Ds", addr, "eth0", "pub", NULL };
+  char *no_arp_argv[] = { "arp", "-i", "eth0", "-d", addr, "pub", NULL };
+  char *route_argv[] = { "route", "add", "-host", addr, "dev", dev, NULL };
+  char *no_route_argv[] = { "route", "del", "-host", addr, "dev", dev, NULL };
+  char **arp, **route;
+
+  switch(change->what){
+  case ADD_ADDR:
+    arp = arp_argv;
+    route = route_argv;
+    break;
+  case DEL_ADDR:
+    arp = no_arp_argv;
+    route = no_route_argv;
+    break;
+  default:
+    fprintf(stderr, "address_change - bad op : %d\n", change->what);
+    return;
+  }
+  sprintf(addr, "%d.%d.%d.%d", change->addr[0], change->addr[1], 
+	  change->addr[2], change->addr[3]);
+  do_exec(arp, 0);
+  do_exec(route, 0);
+}
+
+#define max(i, j) (((i) > (j)) ? (i) : (j))
+
+static void ethertap(char *dev, int data_fd, int control_fd, char *gate, 
+		     char *remote)
+{
   char gate_addr[sizeof("255.255.255.255\0")];
   char remote_addr[sizeof("255.255.255.255\0")];
   int ip[4];
@@ -148,15 +183,19 @@ static void ethertap(int argc, char **argv)
 
   signal(SIGHUP, SIG_IGN);
   setreuid(0, 0);
-  if(argc > 2){
-    strncpy(gate_addr, argv[2], sizeof(gate_addr));
-    strncpy(remote_addr, argv[3], sizeof(remote_addr));
-
+  if(gate != NULL){
+    strncpy(gate_addr, gate, sizeof(gate_addr));
     sscanf(gate_addr, "%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
-    if(maybe_insmod(dev)) fail(fd);
-    if(do_exec(ifconfig_argv, 1)) fail(fd);
-    if(do_exec(route_argv, 0)) fail(fd);
-    do_exec(arp_argv, 0);
+    if(maybe_insmod(dev)) fail(control_fd);
+
+    if(do_exec(ifconfig_argv, 1)) fail(control_fd);
+
+    if(remote != NULL){
+      strncpy(remote_addr, remote, sizeof(remote_addr));
+      if(do_exec(route_argv, 0)) fail(control_fd);
+      do_exec(arp_argv, 0);
+    }
+
     do_exec(forw_argv, 0);
 
     /* On UML : route add -net 192.168.0.0 gw 192.168.0.4 netmask 255.255.255.0
@@ -169,26 +208,27 @@ static void ethertap(int argc, char **argv)
 
   if((tap = open(dev_file, O_RDWR | O_NONBLOCK)) < 0){
     perror("open");
-    fail(fd);
+    fail(control_fd);
   }
 
   c = 1;
-  if(write(fd, &c, sizeof(c)) != sizeof(c)){
+  if(write(control_fd, &c, sizeof(c)) != sizeof(c)){
     perror("write");
-    fail(fd);
+    fail(control_fd);
   }
 
   while(1){
     fd_set fds, except;
     char buf[BUF_SIZE];
-    int n, max;
+    int n, max_fd;
 
     FD_ZERO(&fds);
     FD_SET(tap, &fds);
-    FD_SET(fd, &fds);
+    FD_SET(data_fd, &fds);
+    FD_SET(control_fd, &fds);
     except = fds;
-    max = ((tap > fd) ? tap : fd) + 1;
-    if(select(max, &fds, NULL, &except, NULL) < 0){
+    max_fd = max(max(tap, data_fd), control_fd) + 1;
+    if(select(max_fd, &fds, NULL, &except, NULL) < 0){
       perror("select");
       continue;
     }
@@ -199,22 +239,59 @@ static void ethertap(int argc, char **argv)
 	perror("read");
 	continue;
       }
-      n = send(fd, buf, n, 0);
+      n = send(data_fd, buf, n, 0);
       if((n < 0) && (errno != EAGAIN)){
 	perror("send");
 	break;
       }
     }
-    else if(FD_ISSET(fd, &fds)){
-      n = recvfrom(fd, buf, sizeof(buf), 0, NULL, NULL);
+    else if(FD_ISSET(data_fd, &fds)){
+      n = recvfrom(data_fd, buf, sizeof(buf), 0, NULL, NULL);
       if(n == 0) break;
       else if(n < 0) perror("recvfrom");
       n = write(tap, buf, n);
       if(n < 0) perror("write");      
     }
+    else if(FD_ISSET(control_fd, &fds)){
+      struct addr_change change;
+
+      n = read(control_fd, &change, sizeof(change));
+      if(n == sizeof(change)) address_change(&change, dev);
+      else if(n == 0) break;
+      else {
+	fprintf(stderr, "read from UML failed, n = %d, errno = %d\n", n, 
+		errno);
+	break;
+      }
+    }
   }
   do_exec(down_argv, 0);
-  do_exec(no_arp_argv, 0);
+  if(remote != NULL) do_exec(no_arp_argv, 0);
+}
+
+static void ethertap_v0(int argc, char **argv)
+{
+  char *dev = argv[0];
+  int fd = atoi(argv[1]);
+  char *gate_addr = NULL;
+  char *remote_addr = NULL;
+
+  if(argc > 2){
+    gate_addr = argv[2];
+    remote_addr = argv[3];
+  }
+  ethertap(dev, fd, fd, gate_addr, remote_addr);
+}
+
+static void ethertap_v1(int argc, char **argv)
+{
+  char *dev = argv[0];
+  int data_fd = atoi(argv[1]);
+  int control_fd = atoi(argv[2]);
+  char *gate_addr = NULL;
+
+  if(argc > 3) gate_addr = argv[3];
+  ethertap(dev, data_fd, control_fd, gate_addr, NULL);
 }
 
 static void slip_up(char **argv)
@@ -265,7 +342,7 @@ static void slip_down(char **argv)
   do_exec(no_arp_argv, 1);
 }
 
-static void slip(int argc, char **argv)
+static void slip_v0_v1(int argc, char **argv)
 {
   char *op = argv[0];
 
@@ -277,13 +354,43 @@ static void slip(int argc, char **argv)
   }
 }
 
+#define CURRENT_VERSION (1)
+
+void (*ethertap_handlers[])(int argc, char **argv) = {
+  ethertap_v0, 
+  ethertap_v1
+};
+
+void (*slip_handlers[])(int argc, char **argv) = { 
+  slip_v0_v1, 
+  slip_v0_v1 
+};
+
 int main(int argc, char **argv)
 {
-  char *transport = argv[1];
+  char *version = argv[1];
+  char *transport = argv[2];
+  char *out;
+  int n = 3, v;
 
   setenv("PATH", "/bin:/usr/bin:/sbin:/usr/sbin", 1);
-  if(!strcmp(transport, "ethertap")) ethertap(argc - 2, &argv[2]);
-  else if(!strcmp(transport, "slip")) slip(argc - 2, &argv[2]);
+  v = strtoul(version, &out, 0);
+  if(out != version){
+    if(v > CURRENT_VERSION){
+      fprintf(stderr, "Version mismatch - requested version %d, uml_net "
+	      "supports up to version %d\n", v, CURRENT_VERSION);
+      exit(1);
+    }
+  }
+  else {
+    v = 0;
+    transport = version;
+    n = 2;
+  }
+  if(!strcmp(transport, "ethertap"))
+    (*ethertap_handlers[v])(argc - n, &argv[n]);
+  else if(!strcmp(transport, "slip"))
+    (*slip_handlers[v])(argc - n, &argv[n]);
   else {
     printf("Unknown transport : '%s'\n", transport);
     exit(1);
