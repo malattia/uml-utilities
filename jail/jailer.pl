@@ -32,7 +32,7 @@ while(1){
     }
 }
 
-(!defined($uml) || !defined($rootfs)) and Usage();
+(!defined($uml) || !defined($rootfs) || !defined($uid)) and Usage();
 
 my @cmds = ("mkdir", "tar", "cp", "basename", "rm", @net_cmds );
 
@@ -65,21 +65,23 @@ my $cell = "cell$n";
 my $out;
 my @more_args = ();
 
+sub run {
+    my $cmd = shift;
+    my $out = `$cmd 2>&1`;
+
+    $? ne 0 and die "Running '$cmd' failed : output = '$out'";
+    return($out);
+}
+
 if(defined($host_ip)){
-    $out = `tunctl -u $uid 2>&1`;
-    $? ne 0 and die "Couldn't configure tap device : '$out'";
+    $out = run("tunctl -u $uid");
     if($out =~ /(tap\d+)/){
 	$tap = $1;
 	push @more_args, "eth0=tuntap,$tap";
 
-	$out = `$sudo ifconfig $tap $host_ip up 2>&1`;
-	$? ne 0 and die "Failed to ifconfig $tap : '$out'";
-
-	$out = `$sudo route add -host $uml_ip dev $tap 2>&1`;
-	$? ne 0 and die "Failed to set route to $uml_ip through $tap : '$out'";
-
-	$out = `$sudo echo 1 > /proc/sys/net/ipv4/ip_forward`;
-	$? ne 0 and die "Failed to enable IP forwarding : '$out'";
+	run("$sudo ifconfig $tap $host_ip up");
+	run("$sudo route add -host $uml_ip dev $tap");
+	run("$sudo bash -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'");
     }
     else {
 	die "Couldn't find tap device name in '$out'";
@@ -105,13 +107,6 @@ if($tty_log == 1){
 }
 print "	Extra arguments : '" . join(" ", @uml_args) . "'\n";
 print "\n";
-
-sub run {
-    my $cmd = shift;
-    my $out = `$cmd 2>&1`;
-
-    $? ne 0 and die "Running '$cmd' failed : output = '$out'";
-}
 
 run("mkdir $cell");
 run("chmod 755 $cell");
