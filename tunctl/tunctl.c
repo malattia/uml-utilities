@@ -15,12 +15,13 @@
 
 static void Usage(char *name)
 {
-  fprintf(stderr, "Create: %s [-u owner] [-t device-name] "
+  fprintf(stderr, "Create: %s [-b] [-u owner] [-t device-name] "
 	  "[-f tun-clone-device]\n", name);
   fprintf(stderr, "Delete: %s -d device-name [-f tun-clone-device]\n\n", 
 	  name);
   fprintf(stderr, "The default tun clone device is /dev/net/tun - some systems"
-	  " use\n/dev/misc/net/tun instead\n");
+	  " use\n/dev/misc/net/tun instead\n\n");
+  fprintf(stderr, "-b will result in brief output (just the device name)\n");
   exit(1);
 }
 
@@ -29,13 +30,17 @@ int main(int argc, char **argv)
   struct ifreq ifr;
   struct passwd *pw;
   long owner = geteuid();
-  int tap_fd, opt, delete = 0;
+  int tap_fd, opt, delete = 0, brief = 0;
   char *tun = "", *file = "/dev/net/tun", *name = argv[0], *end;
 
-  while((opt = getopt(argc, argv, "df:ht:u:")) > 0){
+  while((opt = getopt(argc, argv, "bd:f:t:u:")) > 0){
     switch(opt) {
+      case 'b':
+        brief = 1;
+        break;
       case 'd':
         delete = 1;
+	tun = optarg;
         break;
       case 'f':
 	file = optarg;
@@ -59,12 +64,14 @@ int main(int argc, char **argv)
       case 'h':
       default:
         Usage(name);
-        return -1;
     }
   }
 
   argv += optind;
   argc -= optind;
+
+  if(argc > 0)
+    Usage(name);
 
   if((tap_fd = open(file, O_RDWR)) < 0){
     perror("opening tun device");
@@ -73,11 +80,6 @@ int main(int argc, char **argv)
 
   memset(&ifr, 0, sizeof(ifr));
 
-  if(delete){
-    if((*tun == '\0') && (argc > 0)) tun = argv[0];
-    if(*tun == '\0') Usage(name);
-  }
-    
   ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
   strncpy(ifr.ifr_name, tun, sizeof(ifr.ifr_name) - 1);
   if(ioctl(tap_fd, TUNSETIFF, (void *) &ifr) < 0){
@@ -101,7 +103,10 @@ int main(int argc, char **argv)
       perror("TUNSETPERSIST");
       exit(1);
     } 
-    printf("Set '%s' persistent and owned by uid %ld\n", ifr.ifr_name, owner);
+    if(brief)
+      printf("%s\n", ifr.ifr_name);
+    else printf("Set '%s' persistent and owned by uid %ld\n", ifr.ifr_name, 
+		owner);
   }
   return(0);
 }
