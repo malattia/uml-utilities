@@ -57,7 +57,8 @@ static void default_cmd(int fd, char *command)
   char buf[256], name[128];
   int n;
 
-  if(sscanf(command, "%128[^: \f\n\r\t\v]:", name) == 1){
+  if((sscanf(command, "%128[^: \f\n\r\t\v]:", name) == 1) && 
+     (strchr(command, ':') != NULL)){
     if(switch_common(name)) return;
     command = strchr(command, ':');
     *command++ = '\0';
