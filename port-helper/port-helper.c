@@ -3,6 +3,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -44,8 +45,13 @@ static void send_fd(int fd, int target)
 
 int main(int argc, char **argv)
 {
+  char c;
+
+  signal(SIGHUP, SIG_IGN);
+  if(ioctl(0, TIOCNOTTY, 0) < 0)
+    perror("TIOCNOTTY failed");
   signal(SIGHUP, hup);
   send_fd(0, 3);
-  pause();
+  read(3, &c, sizeof(c));
   return(0);
 }
