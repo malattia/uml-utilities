@@ -14,6 +14,17 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <ctype.h>
+#ifdef TUNTAP
+#include <linux/if_tun.h>
+#endif
+
+struct output {
+  int total;
+  int used;
+  char *buffer;
+};
+
+#define INIT_OUTPUT { 0, 0, NULL }
 
 /* Shouldn't there be some other way to figure out the major and minor
  * number of the tap device other than hard-wiring it here? Does FreeBSD
@@ -22,7 +33,7 @@
 #define TAP_MAJOR 36
 #define TAP_MINOR 16  /* plus whatever tap device it was. */
 
-void fail(int fd)
+static void fail(int fd)
 {
   char c = 0;
 
@@ -31,11 +42,60 @@ void fail(int fd)
   exit(1);
 }
 
-int do_exec(char **args, int need_zero)
+static void add_output(struct output *output, char *new, int len)
 {
-  int pid, status;
+  if(len == -1) len = strlen(new) + 1;
+  else len++;
+  if(output->used + len > output->total){
+    output->total = output->used + len;
+    output->total = (output->total + 4095) & ~4095;
+    if(output->buffer == NULL){
+      if((output->buffer = malloc(output->total)) == NULL){
+	perror("mallocing new output buffer");
+	*output = ((struct output) { 0, 0, NULL});
+	return;
+      }
+    }
+    else if((output->buffer = realloc(output->buffer, output->total)) == NULL){
+	perror("reallocing new output buffer");
+	*output = ((struct output) { 0, 0, NULL});
+	return;
+    }
+  }
+  strncpy(&output->buffer[output->used], new, len - 1);
+  output->used += len - 1;
+  output->buffer[output->used] = '\0';
+}
 
+static void output_errno(struct output *output, char *str)
+{
+    add_output(output, str, -1);
+    add_output(output, strerror(errno), -1);
+    add_output(output, "\n", -1);
+}
+
+static int do_exec(char **args, int need_zero, struct output *output)
+{
+  int pid, status, fds[2], n;
+  char buf[256], **arg;
+
+  if(output){
+    add_output(output, "*", -1);
+    for(arg = args; *arg; arg++){
+      add_output(output, " ", -1);
+      add_output(output, *arg, -1);
+    }
+    add_output(output, "\n", -1);
+    if(pipe(fds) < 0){
+      perror("Creating pipe");
+      output = NULL;
+    }
+  }
   if((pid = fork()) == 0){
+    if(output){
+      close(fds[0]);
+      if((dup2(fds[1], 1) < 0) || (dup2(fds[1], 2) < 0)) perror("dup2");
+    }
     execvp(args[0], args);
     fprintf(stderr, "Failed to exec '%s'", args[0]);
     perror("");
@@ -44,6 +104,11 @@ int do_exec(char **args, int need_zero)
   else if(pid < 0){
     perror("fork failed");
     return(-1);
+  }
+  if(output){
+    close(fds[1]);
+    while((n = read(fds[0], buf, sizeof(buf))) > 0) add_output(output, buf, n);
+    if(n < 0) perror("Reading command output");
   }
   if(waitpid(pid, &status, 0) < 0){
     perror("execvp");
@@ -81,7 +146,7 @@ static int maybe_insmod(char *dev)
   }
   sprintf(unit_buf, "unit=%d", unit);
   sprintf(ethertap_buf, "ethertap%d", unit);
-  return(do_exec(insmod_argv, 0));
+  return(do_exec(insmod_argv, 0, NULL));
 }
 
 /* This is a routine to do a 'mknod' on the /dev/tap<n> if possible:
@@ -117,14 +182,33 @@ static int mk_node(char *devname)
   return(mknod(devname, S_IFCHR|S_IREAD|S_IWRITE, makedev(TAP_MAJOR,minor)));
 }
 
-/*
- * Called from UML with the following parameters:
- * uml_net ethertap tap_device file_descriptor gw_ip uml_ip
- * for example:
- * uml_net ethertap tap0 13 192.168.0.4 192.168.0.250
- */
+static int route_and_arp(char *dev, char *addr, int need_route, 
+			 struct output *output)
+{
+  char *arp_argv[] = { "arp", "-Ds", addr, "eth0", "pub", NULL };
+  char *route_argv[] = { "route", "add", "-host", addr, "dev", dev, NULL };
 
-#define BUF_SIZE 1500
+  if(do_exec(route_argv, need_route, output)) return(-1);
+  do_exec(arp_argv, 0, output);
+  return(0);
+}
+
+static int no_route_and_arp(char *dev, char *addr)
+{
+  char *no_arp_argv[] = { "arp", "-i", "eth0", "-d", addr, "pub", NULL };
+  char *no_route_argv[] = { "route", "del", "-host", addr, "dev", dev, NULL };
+
+  do_exec(no_route_argv, 0, NULL);
+  do_exec(no_arp_argv, 0, NULL);
+  return(0);
+}
+
+static void forward_ip(struct output *output)
+{
+  char *forw_argv[] = { "bash",  "-c", 
+			"echo 1 > /proc/sys/net/ipv4/ip_forward", NULL };
+  do_exec(forw_argv, 0, output);
+}
 
 struct addr_change {
 	enum { ADD_ADDR, DEL_ADDR } what;
@@ -134,73 +218,53 @@ struct addr_change {
 static void address_change(struct addr_change *change, char *dev)
 {
   char addr[sizeof("255.255.255.255\0")];
-  char *arp_argv[] = { "arp", "-Ds", addr, "eth0", "pub", NULL };
-  char *no_arp_argv[] = { "arp", "-i", "eth0", "-d", addr, "pub", NULL };
-  char *route_argv[] = { "route", "add", "-host", addr, "dev", dev, NULL };
-  char *no_route_argv[] = { "route", "del", "-host", addr, "dev", dev, NULL };
-  char **arp, **route;
 
+  sprintf(addr, "%d.%d.%d.%d", change->addr[0], change->addr[1], 
+	  change->addr[2], change->addr[3]);
   switch(change->what){
   case ADD_ADDR:
-    arp = arp_argv;
-    route = route_argv;
+    route_and_arp(dev, addr, 0, NULL);
     break;
   case DEL_ADDR:
-    arp = no_arp_argv;
-    route = no_route_argv;
+    no_route_and_arp(dev, addr);
     break;
   default:
     fprintf(stderr, "address_change - bad op : %d\n", change->what);
     return;
   }
-  sprintf(addr, "%d.%d.%d.%d", change->addr[0], change->addr[1], 
-	  change->addr[2], change->addr[3]);
-  do_exec(arp, 0);
-  do_exec(route, 0);
 }
+
+#define BUF_SIZE 1500
 
 #define max(i, j) (((i) > (j)) ? (i) : (j))
 
 static void ethertap(char *dev, int data_fd, int control_fd, char *gate, 
 		     char *remote)
 {
-  char gate_addr[sizeof("255.255.255.255\0")];
-  char remote_addr[sizeof("255.255.255.255\0")];
   int ip[4];
 
-  char *ifconfig_argv[] = { "ifconfig", dev, "arp", "mtu", "1500", gate_addr,
+  char *ifconfig_argv[] = { "ifconfig", dev, "arp", "mtu", "1500", gate,
 			    "netmask", "255.255.255.255", "up", NULL };
   char *down_argv[] = { "ifconfig", dev, "0.0.0.0", "down", NULL };
-  char *route_argv[] = { "route", "add", "-host", remote_addr, "dev", 
-			 dev, NULL };
-  char *arp_argv[] = { "arp", "-Ds", remote_addr, "eth0", "pub", NULL };
-  char *no_arp_argv[] = { "arp", "-i", "eth0", "-d", remote_addr, "pub", 
-			  NULL };
-  char *forw_argv[] = { "bash",  "-c", 
-			"echo 1 > /proc/sys/net/ipv4/ip_forward", NULL };
   char dev_file[sizeof("/dev/tapxxxx\0")], c;
   int tap;
 
   signal(SIGHUP, SIG_IGN);
-  setreuid(0, 0);
+  if(setreuid(0, 0) < 0){
+    perror("setreuid");
+    fail(control_fd);
+  }
   if(gate != NULL){
-    strncpy(gate_addr, gate, sizeof(gate_addr));
-    sscanf(gate_addr, "%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
+    sscanf(gate, "%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
     if(maybe_insmod(dev)) fail(control_fd);
 
-    if(do_exec(ifconfig_argv, 1)) fail(control_fd);
+    if(do_exec(ifconfig_argv, 1, NULL)) fail(control_fd);
 
-    if(remote != NULL){
-      strncpy(remote_addr, remote, sizeof(remote_addr));
-      if(do_exec(route_argv, 0)) fail(control_fd);
-      do_exec(arp_argv, 0);
-    }
+    if((remote != NULL) && route_and_arp(dev, remote, 1, NULL)) 
+      fail(control_fd);
 
-    do_exec(forw_argv, 0);
+    forward_ip(NULL);
 
-    /* On UML : route add -net 192.168.0.0 gw 192.168.0.4 netmask 255.255.255.0
-     * route add default gw 192.168.0.4 - to reach the rest of the net
-     */
   }
   sprintf(dev_file, "/dev/%s", dev);
 
@@ -265,8 +329,8 @@ static void ethertap(char *dev, int data_fd, int control_fd, char *gate,
       }
     }
   }
-  do_exec(down_argv, 0);
-  if(remote != NULL) do_exec(no_arp_argv, 0);
+  if(gate != NULL) do_exec(down_argv, 0, NULL);
+  if(remote != NULL) no_route_and_arp(dev, remote);
 }
 
 static void ethertap_v0(int argc, char **argv)
@@ -283,7 +347,7 @@ static void ethertap_v0(int argc, char **argv)
   ethertap(dev, fd, fd, gate_addr, remote_addr);
 }
 
-static void ethertap_v1(int argc, char **argv)
+static void ethertap_v1_v2(int argc, char **argv)
 {
   char *dev = argv[0];
   int data_fd = atoi(argv[1]);
@@ -303,8 +367,6 @@ static void slip_up(char **argv)
   char *up_argv[] = { "ifconfig", slip_name, gate_addr, "pointopoint", 
 		      remote_addr, "mtu", "1500", "up", NULL };
   char *arp_argv[] = { "arp", "-Ds", remote_addr, "eth0", "pub", NULL };
-  char *forw_argv[] = { "bash",  "-c", 
-			"echo 1 > /proc/sys/net/ipv4/ip_forward", NULL };
   int disc, sencap, n;
   
   disc = N_SLIP;
@@ -318,9 +380,9 @@ static void slip_up(char **argv)
     exit(1);
   }
   sprintf(slip_name, "sl%d", n);
-  if(do_exec(up_argv, 1)) exit(1);
-  do_exec(arp_argv, 1);
-  do_exec(forw_argv, 0);
+  if(do_exec(up_argv, 1, NULL)) exit(1);
+  do_exec(arp_argv, 1, NULL);
+  forward_ip(NULL);
 }
 
 static void slip_down(char **argv)
@@ -338,11 +400,11 @@ static void slip_down(char **argv)
     exit(1);
   }
   sprintf(slip_name, "sl%d", n);  
-  if(do_exec(down_argv, 1)) exit(1);
-  do_exec(no_arp_argv, 1);
+  if(do_exec(down_argv, 1, NULL)) exit(1);
+  do_exec(no_arp_argv, 1, NULL);
 }
 
-static void slip_v0_v1(int argc, char **argv)
+static void slip_v0_v2(int argc, char **argv)
 {
   char *op = argv[0];
 
@@ -354,22 +416,121 @@ static void slip_v0_v1(int argc, char **argv)
   }
 }
 
-#define CURRENT_VERSION (1)
+static void tuntap_up(int argc, char **argv)
+{
+  struct ifreq ifr;
+  int tap_fd, *fd_ptr;
+  char anc[CMSG_SPACE(sizeof(tap_fd))];
+  char *dev = argv[0];
+  int uml_fd = atoi(argv[1]);
+  char *gate_addr = argv[2];
+  struct msghdr msg;
+  struct cmsghdr *cmsg;
+  char *ifconfig_argv[] = { "ifconfig", ifr.ifr_name, gate_addr, "netmask", 
+			    "255.255.255.255", "up", NULL };
+  struct output output = INIT_OUTPUT;
+  struct iovec iov[2]; 
+
+  msg.msg_control = NULL;
+  msg.msg_controllen = 0;
+
+  if(setreuid(0, 0) < 0){
+    output_errno(&output, "setreuid to root failed : ");
+    goto out;
+  }
+  if((tap_fd = open("/dev/net/tun", O_RDWR)) < 0){
+    output_errno(&output, "Opening /dev/net/tun failed : ");
+    goto out;
+  }
+  memset(&ifr, 0, sizeof(ifr));
+  ifr.ifr_flags = IFF_TAP;
+  ifr.ifr_name[0] = '\0';
+  if(ioctl(tap_fd, TUNSETIFF, (void *) &ifr) < 0){
+    output_errno(&output, "TUNSETIFF");
+    goto out;
+  }
+
+  if((*gate_addr != '\0') && do_exec(ifconfig_argv, 1, &output)) goto out;
+  forward_ip(&output);
+
+  msg.msg_control = anc;
+  msg.msg_controllen = sizeof(anc);
+  
+  cmsg = CMSG_FIRSTHDR(&msg);
+  cmsg->cmsg_level = SOL_SOCKET;
+  cmsg->cmsg_type = SCM_RIGHTS;
+  cmsg->cmsg_len = CMSG_LEN(sizeof(tap_fd));
+
+  msg.msg_controllen = cmsg->cmsg_len;
+
+  fd_ptr = (int *) CMSG_DATA(cmsg);
+  *fd_ptr = tap_fd;
+
+ out:
+  iov[0].iov_base = ifr.ifr_name;
+  iov[0].iov_len = IFNAMSIZ;
+  iov[1].iov_base = output.buffer;
+  iov[1].iov_len = output.used;
+
+  msg.msg_name = NULL;
+  msg.msg_namelen = 0;
+  msg.msg_iov = iov;
+  msg.msg_iovlen = sizeof(iov)/sizeof(iov[0]);
+  msg.msg_flags = 0;
+
+  if(sendmsg(uml_fd, &msg, 0) < 0){
+    perror("sendmsg");
+    exit(1);
+  }
+}
+
+static void tuntap_change(int argc, char **argv)
+{
+  char *op = argv[0];
+  char *dev = argv[1];
+  char *address = argv[2];
+
+  if(!strcmp(op, "add")) route_and_arp(dev, address, 0, NULL);
+  else no_route_and_arp(dev, address);
+}
+
+static void tuntap_v2(int argc, char **argv)
+{
+  char *op = argv[0];
+
+  if(!strcmp(op, "up")) tuntap_up(argc - 1, argv + 1);
+  else if(!strcmp(op, "add") || !strcmp(op, "del")) tuntap_change(argc, argv);
+  else {
+    fprintf(stderr, "Bad tuntap op : '%s'\n", op);
+    exit(1);
+  }
+}
+
+#define CURRENT_VERSION (2)
 
 void (*ethertap_handlers[])(int argc, char **argv) = {
   ethertap_v0, 
-  ethertap_v1
+  ethertap_v1_v2,
+  ethertap_v1_v2
 };
 
 void (*slip_handlers[])(int argc, char **argv) = { 
-  slip_v0_v1, 
-  slip_v0_v1 
+  slip_v0_v2, 
+  slip_v0_v2,
+  slip_v0_v2, 
+};
+
+void (*tuntap_handlers[])(int argc, char **argv) = {
+  NULL,
+  NULL,
+  tuntap_v2
 };
 
 int main(int argc, char **argv)
 {
   char *version = argv[1];
   char *transport = argv[2];
+  void (**handlers)(int, char **);
   char *out;
   int n = 3, v;
 
@@ -387,12 +548,16 @@ int main(int argc, char **argv)
     transport = version;
     n = 2;
   }
-  if(!strcmp(transport, "ethertap"))
-    (*ethertap_handlers[v])(argc - n, &argv[n]);
-  else if(!strcmp(transport, "slip"))
-    (*slip_handlers[v])(argc - n, &argv[n]);
+  if(!strcmp(transport, "ethertap")) handlers = ethertap_handlers;
+  else if(!strcmp(transport, "slip")) handlers = slip_handlers;
+  else if(!strcmp(transport, "tuntap")) handlers = tuntap_handlers;
   else {
     printf("Unknown transport : '%s'\n", transport);
+    exit(1);
+  }
+  if(handlers[v] != NULL) (*handlers[v])(argc - n, &argv[n]);
+  else {
+    printf("No version #%d handler for '%s'\n", v, transport);
     exit(1);
   }
   return(0);

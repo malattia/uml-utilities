@@ -1,5 +1,6 @@
 OBJS = uml_net.o
-CFLAGS = -g -Wall
+TUNTAP = $(shell [ -e /usr/include/linux/if_tun.h ] && echo -DTUNTAP)
+CFLAGS = -g -Wall $(TUNTAP)
 
 all : uml_net
 
@@ -10,4 +11,5 @@ clean :
 	rm -f uml_net $(OBJS) *~
 
 install :
-	install -m 04755 uml_net $(DESTDIR)/usr/bin
+	install -d $(DESTDIR)/usr/bin
+	install -s -m 04755 uml_net $(DESTDIR)/usr/bin
