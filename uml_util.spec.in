@@ -31,14 +31,14 @@ make install DESTDIR=$RPM_BUILD_ROOT
 
 %files
 %attr(755,root,root)			%{_bindir}/jailtest
-%attr(755,root,root)			%{_bindir}/mkrootfs
+#%attr(755,root,root)			%{_bindir}/mkrootfs
 %attr(755,root,root)			%{_bindir}/tunctl
 %attr(755,root,root)			%{_bindir}/uml_mconsole
 %attr(755,root,root)			%{_bindir}/uml_moo
 %attr(4755,root,root)			%{_bindir}/uml_net
 %attr(755,root,root)			%{_bindir}/uml_switch
 %attr(755,root,root)		%dir	%{_libdir}/uml
-%attr(755,root,root)			%{_libdir}/uml/functions
+#%attr(755,root,root)			%{_libdir}/uml/functions
 %attr(755,root,root)			%{_libdir}/uml/port-helper
 
 %clean
