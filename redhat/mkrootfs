@@ -129,7 +129,7 @@ esac
 if [ -f ./functions ] ; then
     . ./functions
 else
-    . /var/lib/uml/functions
+    . /usr/lib/uml/functions
 fi
 
 #addline() #Params: $1 File that needs the additional line, $2 line to add.
