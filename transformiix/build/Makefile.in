@@ -1,0 +1,143 @@
+# 
+# The contents of this file are subject to the Mozilla Public
+# License Version 1.1 (the "License"); you may not use this file
+# except in compliance with the License. You may obtain a copy of
+# the License at http://www.mozilla.org/MPL/
+# 
+# Software distributed under the License is distributed on an "AS
+# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
+# implied. See the License for the specific language governing
+# rights and limitations under the License.
+# 
+# The Original Code is Transformiix XSLT Processor.
+# 
+# The Initial Developer of the Original Code is Axel Hecht.
+# Portions created by Axel Hecht are  Copyright (C) Axel Hecht.
+# All Rights Reserved.
+# 
+# Contributor(s):
+#	Axel Hecht <axel@pike.org>
+# 
+
+DEPTH           = ../../..
+topsrcdir       = @top_srcdir@
+srcdir          = @srcdir@
+VPATH           = @srcdir@
+
+include $(DEPTH)/config/autoconf.mk
+
+MODULE		= transformiix
+LIBRARY_NAME	= transformiix
+SHORT_LIBNAME	= t8iix
+IS_COMPONENT	= 1
+
+
+CPPSRCS = XSLTProcessorModule.cpp
+OBJS =../source/base/ArrayList.o \
+  ../source/base/CommandLineUtils.o \
+  ../source/base/DefaultStringComparator.o \
+  ../source/base/Double.o \
+  ../source/base/HashTable.o \
+  ../source/base/Integer.o \
+  ../source/base/List.o \
+  ../source/base/MITREObjectWrapper.o \
+  ../source/base/Map.o \
+  ../source/base/NamedMap.o \
+  ../source/base/SimpleErrorObserver.o \
+  ../source/base/Stack.o \
+  ../source/base/StringComparator.o \
+  ../source/base/StringList.o \
+  ../source/base/Tokenizer.o \
+  ../source/base/MozillaString.o \
+  ../source/net/URIUtils.o \
+  ../source/xml/dom/mozImpl/MozillaObjectWrapper.o \
+  ../source/xml/dom/mozImpl/MozillaAttr.o \
+  ../source/xml/dom/mozImpl/MozillaCDATASection.o \
+  ../source/xml/dom/mozImpl/MozillaCharacterData.o \
+  ../source/xml/dom/mozImpl/MozillaComment.o \
+  ../source/xml/dom/mozImpl/MozillaDOMImplementation.o \
+  ../source/xml/dom/mozImpl/MozillaDocument.o \
+  ../source/xml/dom/mozImpl/MozillaDocumentFragment.o \
+  ../source/xml/dom/mozImpl/MozillaDocumentType.o \
+  ../source/xml/dom/mozImpl/MozillaElement.o \
+  ../source/xml/dom/mozImpl/MozillaEntity.o \
+  ../source/xml/dom/mozImpl/MozillaEntityReference.o \
+  ../source/xml/dom/mozImpl/MozillaNamedNodeMap.o \
+  ../source/xml/dom/mozImpl/MozillaNode.o \
+  ../source/xml/dom/mozImpl/MozillaNodeList.o \
+  ../source/xml/dom/mozImpl/MozillaNotation.o \
+  ../source/xml/dom/mozImpl/MozillaProcInstruction.o \
+  ../source/xml/dom/mozImpl/MozillaText.o \
+  ../source/xpath/AdditiveExpr.o \
+  ../source/xpath/AttributeExpr.o \
+  ../source/xpath/AttributeValueTemplate.o \
+  ../source/xpath/BasicNodeExpr.o \
+  ../source/xpath/BooleanExpr.o \
+  ../source/xpath/BooleanFunctionCall.o \
+  ../source/xpath/BooleanResult.o \
+  ../source/xpath/ElementExpr.o \
+  ../source/xpath/ErrorFunctionCall.o \
+  ../source/xpath/ExprLexer.o \
+  ../source/xpath/ExprParser.o \
+  ../source/xpath/ExtensionFunctionCall.o \
+  ../source/xpath/FilterExpr.o \
+  ../source/xpath/FunctionCall.o \
+  ../source/xpath/IdentityExpr.o \
+  ../source/xpath/LocationStep.o \
+  ../source/xpath/MultiplicativeExpr.o \
+  ../source/xpath/NodeSet.o \
+  ../source/xpath/NodeSetFunctionCall.o \
+  ../source/xpath/NumberExpr.o \
+  ../source/xpath/NumberFunctionCall.o \
+  ../source/xpath/NumberResult.o \
+  ../source/xpath/ParentExpr.o \
+  ../source/xpath/PathExpr.o \
+  ../source/xpath/PredicateList.o \
+  ../source/xpath/RelationalExpr.o \
+  ../source/xpath/RootExpr.o \
+  ../source/xpath/StringExpr.o \
+  ../source/xpath/StringFunctionCall.o \
+  ../source/xpath/StringResult.o \
+  ../source/xpath/TextExpr.o \
+  ../source/xpath/UnionExpr.o \
+  ../source/xpath/VariableRefExpr.o \
+  ../source/xpath/WildCardExpr.o \
+  ../source/xpath/XPathNames.o \
+  ../source/xml/XMLUtils.o \
+  ../source/xml/XMLDOMUtils.o \
+  ../source/xml/util/DOMHelper.o \
+  ../source/xml/parser/XMLParser.o \
+  ../source/xml/parser/hashtable.o \
+  ../source/xml/parser/xmlrole.o \
+  ../source/xml/parser/xmlparse.o \
+  ../source/xml/parser/xmltok.o \
+  ../source/xslt/OutputFormat.o \
+  ../source/xslt/Names.o \
+  ../source/xslt/Numbering.o \
+  ../source/xslt/ProcessorState.o \
+  ../source/xslt/VariableBinding.o \
+  ../source/xslt/XSLTProcessor.o \
+  ../source/xslt/functions/DocumentFunctionCall.o \
+  ../source/xslt/functions/GenerateIdFunctionCall.o \
+  ../source/xslt/util/NodeSorter.o \
+  ../source/xslt/util/NodeStack.o \
+  XSLTProcessorModule.o
+
+include $(topsrcdir)/config/rules.mk
+
+INCLUDES += -I$(srcdir)/../source/xslt -I$(srcdir)/../source/base \
+  -I$(srcdir)/../source/net \
+  -I$(srcdir)/../source/xml -I$(srcdir)/../source/xml/dom \
+  -I$(srcdir)/../source/xml/util \
+  -I$(srcdir)/../source/xml/parser -I$(srcdir)/../source/xml/parser/xmlparse \
+  -I$(srcdir)/../source/xml/printer -I$(srcdir)/../source/xpath \
+  -I$(srcdir)/../source/xslt/util -I$(srcdir)/../source/xslt/functions
+
+_T_VERSION = $(shell date +%Y%m%d%H)
+
+GARBAGE += install.js $(wildcard transformiix*.xpi)
+
+xpi:
+	$(PERL) $(topsrcdir)/xpinstall/packager/unix/makejs.pl $(srcdir)/transformiix.jst $(_T_VERSION) . install.js
+	zip transformiix$(_T_VERSION).xpi install.js
+	cd $(DIST); zip -u ../extensions/transformiix/build/transformiix$(_T_VERSION).xpi bin/components/libtransformiix.so
