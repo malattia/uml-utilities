@@ -54,7 +54,7 @@ static void ethertap(int argc, char **argv)
   char ether_addr[sizeof("ff:ff:ff:ff:ff:ff\0")];
   int ip[4];
 
-  char *ifconfig_argv[] = { "ifconfig", dev, "arp", "mtu", "1484", gate_addr,
+  char *ifconfig_argv[] = { "ifconfig", dev, "arp", "mtu", "1500", gate_addr,
 			    "up", NULL };
   char *down_argv[] = { "ifconfig", dev, "0.0.0.0", "down", NULL };
   char *route_argv[] = { "route", "add", "-host", remote_addr, "gw", 
