@@ -19,6 +19,11 @@
 #include <errno.h>
 #include "um_eth_net.h"
 
+/* SOL_PACKET is wrapped inside an #ifdef KERNEL on my system - jdike */
+#ifndef SOL_PACKET
+#define SOL_PACKET  263
+#endif
+
 int socket_phy_setup(char *name) {
   struct sockaddr_ll sll;
   struct packet_mreq mreq;
