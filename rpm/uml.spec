@@ -1,5 +1,4 @@
-%define version 0.39_2.4.2
-%define kernel_pool um
+%define version 0.42_2.4.5
 
 Name:				user-mode-linux
 Summary:			The user-mode port of the Linux kernel
@@ -20,6 +19,9 @@ a set of Linux processes.  This package also contains a number of other useful
 tools and utilities related to UML.
 
 %changelog
+* Wed Mar  7 2001 Jeff Dike <jdike@karaya.com>
+- Redid the network drivers
+
 * Wed Mar  7 2001 Jeff Dike <jdike@karaya.com>
 - initial version
 
@@ -69,11 +71,10 @@ if [ "$RPM_BUILD_ROOT" = "/tmp/uml-kit" ]; then
     make oldconfig ARCH=um
     make linux ARCH=um
     make modules ARCH=um
-    make modules_install INSTALL_MOD_PATH=$RPM_BUILD_ROOT/lib/modules/`./linux --version`
 
     make -C $CVS_POOL/doc/web UserModeLinux-HOWTO.txt
-    make -C $CVS_POOL/tools/umn all
-    make -C $CVS_POOL/tools/net all
+    make -C $CVS_POOL/tools/uml_net all
+    make -C $CVS_POOL/tools/uml_router all
 else
 	echo Invalid Build root
 	exit 1
@@ -86,18 +87,22 @@ if [ "$RPM_BUILD_ROOT" = "/tmp/uml-kit" ]; then
     install -s $RPM_BUILD_ROOT/usr/src/linux/linux $RPM_BUILD_ROOT/usr/bin
 
     cd $RPM_BUILD_ROOT/usr/src/linux
-    make modules_install INSTALL_MOD_PATH=modules
-    cd modules
-    tar cf $RPM_BUILD_ROOT/modules.tar .
+    mkdir -p $RPM_BUILD_ROOT/lib/modules/`./linux --version`
+    ln -s $RPM_BUILD_ROOT/lib/modules/`./linux --version` \
+	$RPM_BUILD_ROOT/lib/modules/`./linux --version | sed s/-.um//`
+    make modules_install ARCH=um INSTALL_MOD_PATH=$RPM_BUILD_ROOT
+    rm -f $RPM_BUILD_ROOT/lib/modules/`./linux --version | sed s/-.um//`
+    cd $RPM_BUILD_ROOT
+    tar cf $RPM_BUILD_ROOT/modules.tar lib
     gzip $RPM_BUILD_ROOT/modules.tar
     install -d $RPM_BUILD_ROOT/usr/lib/uml
     install $RPM_BUILD_ROOT/modules.tar.gz $RPM_BUILD_ROOT/usr/lib/uml
 
     install $CVS_POOL/tools/redhat/mkrootfs $RPM_BUILD_ROOT/usr/bin/mkrootfs
-    install $CVS_POOL/tools/umn/umn_helper $RPM_BUILD_ROOT/usr/bin/umn_helper
-    install $CVS_POOL/tools/net/um_eth_serv $RPM_BUILD_ROOT/usr/bin/um_eth_serv
-    install $CVS_POOL/tools/net/um_eth_tool $RPM_BUILD_ROOT/usr/bin/um_eth_tool
-    
+    install $CVS_POOL/tools/uml_net/uml_net $RPM_BUILD_ROOT/usr/bin/uml_net
+    install $CVS_POOL/tools/uml_router/uml_router \
+	$RPM_BUILD_ROOT/usr/bin/uml_router
+
     install -d $RPM_BUILD_ROOT/usr/doc/HOWTO
     install $CVS_POOL/doc/web/UserModeLinux-HOWTO.txt $RPM_BUILD_ROOT/usr/doc/HOWTO/UserModeLinux-HOWTO
 
@@ -121,7 +126,6 @@ fi
 %attr(755,root,root)				/usr/bin/linux
 %attr(644,root,root)                            /usr/lib/uml/modules.tar.gz
 %attr(755,root,root)				/usr/bin/mkrootfs
-%attr(4755,root,root)				/usr/bin/umn_helper
-%attr(755,root,root)				/usr/bin/um_eth_serv
-%attr(755,root,root)				/usr/bin/um_eth_tool
+%attr(4755,root,root)				/usr/bin/uml_net
+%attr(755,root,root)				/usr/bin/uml_router
 %attr(644,root,root)                            /usr/doc/HOWTO/UserModeLinux-HOWTO
