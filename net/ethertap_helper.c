@@ -45,9 +45,13 @@ main(int argc, char **argv)
   char *gate_addr = argv[3];
   char *remote_addr = argv[4];
   int pid, status;
-  char *ifconfig_argv[] = { "ifconfig", dev, "arp", gate_addr, "up", NULL };
+  char *ifconfig_argv[] = { "ifconfig", dev, "arp", gate_addr, "up",
+			    "mtu", "1484", NULL };
   char *route_argv[] = { "route", "add", "-host", remote_addr, "gw", 
 			 gate_addr, NULL };
+  char *arp_argv[] = { "arp", "-Ds", gate_addr, "eth0", "pub", NULL };
+  char *forw_argv[] = { "bash",  "-c", 
+			"echo 1 > /proc/sys/net/ipv4/ip_forward", NULL };
   char dev_file[sizeof("/dev/tapxxxx\0")], c;
   int tap, *fdptr;
 
@@ -61,14 +65,11 @@ main(int argc, char **argv)
 
   if(do_exec(ifconfig_argv, 1)) fail(fd);
   if(do_exec(route_argv, 0)) fail(fd);
+  do_exec(arp_argv, 0);
+  do_exec(forw_argv, 0);
 
-
-  /* arp -s 192.168.0.252 00:01:02:79:65:83 pub
-   * maybe arp -s 192.168.0.252 eth0 pub
-   * echo 1 > /proc/sys/net/ipv4/ip_forward 
-   * On host : route add -net 192.168.0.0 gw 192.168.0.4 netmask 255.255.255.0
+  /* On UML : route add -net 192.168.0.0 gw 192.168.0.4 netmask 255.255.255.0
    */
-
 
   c = 1;
   if(write(fd, &c, sizeof(c)) != sizeof(c)){
