@@ -1,18 +1,24 @@
-BIN = uml_moo
-OBJS = $(BIN).o cow.o
+BIN = uml_moo uml_mkcow
+
+uml_moo_OBJS = uml_moo.o cow.o
+uml_mkcow_OBJS = uml_mkcow.o cow.o
+
 CFLAGS = -g -Wall -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE
 
 BIN_DIR ?= /usr/bin
 
 all : $(BIN)
 
-$(BIN) : $(OBJS)
-	$(CC) $(CFLAGS) -o $(BIN) $(OBJS)
+uml_moo : $(uml_moo_OBJS)
+	$(CC) $(CFLAGS) -o $@ $($@_OBJS)
 
-$(OBJS) : cow.h cow_sys.h
+uml_mkcow : $(uml_mkcow_OBJS)
+	$(CC) $(CFLAGS) -o $@ $($@_OBJS)
+
+$(uml_moo_OBJS) $(uml_mkcow_OBJS) : cow.h cow_sys.h
 
 clean : 
-	rm -f $(BIN) $(OBJS) *~
+	rm -f $(foreach bin,$(BIN),$($(bin)_OBJS)) $(BIN) $(OBJS) *~
 
 install : $(BIN)
 	install -d $(DESTDIR)$(BIN_DIR)
