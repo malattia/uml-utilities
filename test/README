@@ -1,0 +1,10 @@
+This directory contains the UML package, in UML.pm, and a little demo
+in boot.pl.  Read the pod at the end of UML.pm to see what the UML
+methods and their arguments are.
+
+You can run the demo with "perl -I . boot.pl".  You will need to
+change the kernel command line in boot.pl, and maybe pass in values
+for the login and password prompts, the login account name and
+password, and the shell prompt to UML::new().
+
+boot.pl will boot up the virtual machine, run "ls -al", and halt.
