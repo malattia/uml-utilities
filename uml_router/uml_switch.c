@@ -3,35 +3,28 @@
  */
 
 #include <stdio.h>
-#include <stddef.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <errno.h>
+#include <stdlib.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <sys/un.h>
 #include <sys/poll.h>
+#include <sys/time.h>
+#include <unistd.h>
 #include "switch.h"
+#include "port.h"
 #include "hash.h"
+#ifdef TUNTAP
+#include "tuntap.h"
+#endif
 
-#define GC_INTERVAL 2
-#define GC_EXPIRE 100
-
-#define IS_BROADCAST(addr) ((addr[0] & 1) == 1)
+#ifdef notdef
+#include <stddef.h>
+#endif
 
 static int hub = 0;
 static int compat_v0 = 0;
-
-struct port {
-  struct port *next;
-  struct port *prev;
-  int control;
-  struct sockaddr_un sock;
-};
-
-static struct port *monitor_port = NULL;
 
 enum request_type { REQ_NEW_CONTROL };
 
@@ -83,17 +76,6 @@ union request {
   struct request_v2 v2;
   struct request_v3 v3;
 };
-
-struct packet {
-  struct {
-    unsigned char dest[6];
-    unsigned char src[6];
-    unsigned char proto[2];
-  } header;
-  unsigned char data[1500];
-};
-
-static struct port *head = NULL;
 
 static char *ctl_socket = "/tmp/uml.ctl";
 
@@ -159,152 +141,14 @@ static void close_descriptor(int fd)
 {
   remove_fd(fd);
   close(fd);
+  close_port(fd);
 }
 
-static void free_port(struct port *port)
-{
-  close_descriptor(port->control);
-  if(port->prev) port->prev->next = port->next;
-  else head = port->next;
-  if(port->next) port->next->prev = port->prev;
-  free(port);
-}
-
-static void service_port(struct port *port)
-{
-  union request req;
-  int n;
-
-  n = read(port->control, &req, sizeof(req));
-  if(n < 0){
-    perror("Reading request");
-    free_port(port);
-    return;
-  }
-  else if(n == 0){
-    printf("Disconnect\n");
-    free_port(port);
-    return;
-  }
-  printf("Bad request\n");  
-  free_port(port);
-}
-
-static void update_src(struct port *port, struct packet *p)
-{
-  struct port *last;
-
-  /* We don't like broadcast source addresses */
-  if(IS_BROADCAST(p->header.src)) return;  
-
-  last = find_in_hash(p->header.src);
-
-  if(port != last){
-    /* old value differs from actual input port */
-
-    printf(" Addr: %02x:%02x:%02x:%02x:%02x:%02x "
-	   " New port %d",
-	   p->header.src[0], p->header.src[1], p->header.src[2],
-	   p->header.src[3], p->header.src[4], p->header.src[5],
-	   port->control);
-
-    if(last != NULL){
-      printf("old port %d", last->control);
-      delete_hash_entry(p->header.src);
-    }
-    printf("\n");
-
-    insert_into_hash(p->header.src, port);
-  }
-  update_entry_time(p->header.src);
-}
-
-static void send_dst(struct port *port, int fd, struct packet *packet, int len)
-{
-  struct port *target, *p;
-
-  target = find_in_hash(packet->header.dest);
-  if((target == NULL) || IS_BROADCAST(packet->header.dest) || hub){
-    if((target == NULL) && !IS_BROADCAST(packet->header.dest)){
-      printf("unknown Addr: %02x:%02x:%02x:%02x:%02x:%02x from port ",
-	     packet->header.src[0], packet->header.src[1], 
-	     packet->header.src[2], packet->header.src[3], 
-	     packet->header.src[4], packet->header.src[5]);
-      if(port == NULL) printf("UNKNOWN\n");
-      else printf("%d\n", port->control);
-    } 
-
-    /* no cache or broadcast/multicast == all ports */
-    for(p = head; p != NULL; p = p->next){
-      /* don't send it back the port it came in */
-      if(p == port) continue;
-
-      sendto(fd, packet, len, 0, (struct sockaddr *) &p->sock, 
-	     sizeof(p->sock));
-    }
-  }
-  else {
-    sendto(fd, packet, len, 0, (struct sockaddr *) &target->sock, 
-	   sizeof(target->sock));
-    if((monitor_port != NULL) && (port != monitor_port) && 
-       (target != monitor_port))
-      sendto(fd, packet, len, 0, (struct sockaddr *) &monitor_port->sock, 
-	     sizeof(monitor_port->sock));
-  }
-}
-
-static void handle_data(int fd)
-{
-  struct packet packet;
-  struct port *p;
-  struct sockaddr_un source;
-  int len, socklen;
-
-  len = recvfrom(fd, &packet, sizeof(packet), 0, (struct sockaddr *) &source,
-		 &socklen);
-  if(len < 0){
-    if(errno != EAGAIN) perror("Reading data");
-    return;
-  }
-
-  for(p = head; p != NULL; p = p->next){
-    if(!memcmp(p->sock.sun_path, source.sun_path, sizeof(source.sun_path) - 1))
-      break;
-  }
-  
-  /* if we have an incoming port (we should) */
-  if(p != NULL) update_src(p, &packet);
-  else printf("Unknown connection for packet, shouldnt happen.\n");
-
-  send_dst(p, fd, &packet, len);  
-}
-
-static struct port *setup_port(int fd, struct sockaddr_un *name)
-{
-  struct port *port;
-
-  port = malloc(sizeof(struct port));
-  if(port == NULL){
-    perror("malloc");
-    close_descriptor(fd);
-    return(NULL);
-  }
-  port->next = head;
-  if(head) head->prev = port;
-  port->prev = NULL;
-  port->control = fd;
-  port->sock = *name;
-  head = port;
-  printf("New connection\n");
-  return(port);
-}
-
-static void new_port_v0(int fd, struct port *conn, 
-			      struct request_v0 *req)
+static void new_port_v0(int fd, struct request_v0 *req, int data_fd)
 {
   switch(req->type){
   case REQ_NEW_CONTROL:
-    setup_port(fd, &req->u.new_control.name);
+    setup_sock_port(fd, &req->u.new_control.name, data_fd);
     break;
   default:
     printf("Bad request type : %d\n", req->type);
@@ -312,20 +156,19 @@ static void new_port_v0(int fd, struct port *conn,
   }
 }
 
-static void new_port_v1_v3(int fd, struct port *port, enum request_type type, 
-			   struct sockaddr_un *sock)
+static void new_port_v1_v3(int fd, enum request_type type, 
+			   struct sockaddr_un *sock, int data_fd)
 {
-  struct port *new;
-  int n;
+  int n, err;
 
   switch(type){
   case REQ_NEW_CONTROL:
-    new = setup_port(fd, sock);
-    if(new == NULL) return;
+    err = setup_sock_port(fd, sock, data_fd);
+    if(err) return;
     n = write(fd, &data_sun, sizeof(data_sun));
     if(n != sizeof(data_sun)){
       perror("Sending data socket name");
-      free_port(new);
+      close_descriptor(fd);
     }
     break;
   default:
@@ -334,49 +177,15 @@ static void new_port_v1_v3(int fd, struct port *port, enum request_type type,
   }
 }
 
-static unsigned long start_range = 0;
-static unsigned long end_range = 0xfffffffe;
-static unsigned long current = 0;
-
-static void new_port_v2(int fd, struct port *port, struct request_v2 *req)
+static void new_port_v2(int fd, struct request_v2 *req, int data_fd)
 {
-  struct port *new;
-  struct reply_v2 reply;
-  int n;
-
-  switch(req->type){
-  case REQ_NEW_CONTROL:
-    if(current > end_range){
-      fprintf(stderr, "Out of MACs\n");
-      close(fd);
-      return;
-    }
-    reply.mac[0] = 0xfe;
-    reply.mac[1] = 0xfd;
-    reply.mac[2] = current >> 24;
-    reply.mac[3] = (current >> 16) & 0xff;
-    reply.mac[4] = (current >> 8) & 0xff;
-    reply.mac[5] = current & 0xff;
-    new = setup_port(fd, &req->sock);
-    if(new == NULL) return;
-    reply.sock = data_sun;
-    n = write(fd, &reply, sizeof(reply));
-    if(n != sizeof(reply)){
-      perror("Sending reply");
-      free_port(new);
-    }
-    current++;
-    break;
-  default:
-    printf("Bad request type : %d\n", req->type);
-    close_descriptor(fd);
-  }
+  fprintf(stderr, "Version 2 is not supported\n");
+  close_descriptor(fd);
 }
 
-static void new_port(int fd)
+static void new_port(int fd, int data_fd)
 {
   union request req;
-  struct port *port;
   int len;
 
   len = read(fd, &req, sizeof(req));
@@ -393,28 +202,15 @@ static void new_port(int fd)
     return;
   }
   if(req.v1.magic == SWITCH_MAGIC){
-    if(req.v2.version == 2) new_port_v2(fd, port, &req.v2);
+    if(req.v2.version == 2) new_port_v2(fd, &req.v2, data_fd);
     if(req.v3.version == 3) 
-      new_port_v1_v3(fd, port, req.v3.type, &req.v3.sock);
+      new_port_v1_v3(fd, req.v3.type, &req.v3.sock, data_fd);
     else if(req.v2.version > 2) 
       fprintf(stderr, "Request for a version %d port, which this "
 	      "uml_switch doesn't support\n", req.v2.version);
-    else new_port_v1_v3(fd, port, req.v1.type, &req.v1.u.new_control.name);
+    else new_port_v1_v3(fd, req.v1.type, &req.v1.u.new_control.name, data_fd);
   }
-  else new_port_v0(fd, port, &req.v0);
-}
-
-void handle_port(int fd)
-{
-  struct port *p;
-
-  for(p = head; p != NULL; p = p->next){
-    if(p->control == fd){
-      service_port(p);
-      break;
-    }
-  }
-  if(p == NULL) new_port(fd);
+  else new_port_v0(fd, &req.v0, data_fd);
 }
 
 void accept_connection(int fd)
@@ -596,7 +392,11 @@ static void Usage(void)
 
 int main(int argc, char **argv)
 {
-  int connect_fd, data_fd, n, i, one = 1;
+  int connect_fd, data_fd, n, i, new, one = 1;
+  char *tap_dev = NULL;
+#ifdef TUNTAP
+  int tap_fd;
+#endif
 
   prog = argv[0];
   argv++;
@@ -612,6 +412,16 @@ int main(int argc, char **argv)
       data_socket = argv[0];
       argc--;
       argv++;
+    }
+    if(!strcmp(argv[0], "-tap")){
+#ifdef TUNTAP
+      tap_dev = argv[1];
+      argv += 2;
+      argc -= 2;
+#else
+      fprintf(stderr, "-tap isn't supported since TUNTAP isn't enabled\n");
+      Usage();
+#endif      
     }
     else if(!strcmp(argv[0], "-hub")){
       printf("%s will be a hub instead of a switch\n", prog);
@@ -629,8 +439,6 @@ int main(int argc, char **argv)
     else Usage();
   }
 
-  current = start_range;
-  
   if((connect_fd = socket(PF_UNIX, SOCK_STREAM, 0)) < 0){
     perror("socket");
     exit(1);
@@ -663,6 +471,7 @@ int main(int argc, char **argv)
 
   if(signal(SIGINT, sig_handler) < 0)
     perror("Setting handler for SIGINT");
+  hash_init();
 
   if(compat_v0) 
     printf("%s attached to unix sockets '%s' and '%s'\n", prog, ctl_socket,
@@ -672,6 +481,12 @@ int main(int argc, char **argv)
   if(isatty(0)) add_fd(0);
   add_fd(connect_fd);
   add_fd(data_fd);
+
+#ifdef TUNTAP
+  if(tap_dev != NULL) tap_fd = open_tap(tap_dev);
+  if(tap_fd > -1) add_fd(tap_fd);
+#endif
+
   while(1){
     char buf[128];
 
@@ -705,8 +520,15 @@ int main(int argc, char **argv)
 	}
 	accept_connection(connect_fd);
       }
-      else if(fds[i].fd == data_fd) handle_data(data_fd);
-      else handle_port(fds[i].fd);
+      else if(fds[i].fd == data_fd) handle_sock_data(data_fd, hub);
+#ifdef TUNTAP
+      else if(fds[i].fd == tap_fd) handle_tap_data(tap_fd, hub);
+#endif
+      else {
+	new = handle_port(fds[i].fd);
+	if(new) new_port(fds[i].fd, data_fd);
+	else close_descriptor(fds[i].fd);
+      }
     }
   }
  out:

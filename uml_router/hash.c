@@ -5,10 +5,13 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <string.h>
 #include <errno.h>
 #include <time.h>
 #include <sys/types.h>
+#include <sys/time.h>
+#include <sys/signal.h>
 #include "switch.h"
 #include "hash.h"
 
@@ -80,16 +83,22 @@ void update_entry_time(char *src)
   e->last_seen = time(NULL);
 }
 
-void delete_hash_entry(char *dst)
+static void delete_hash_entry(struct hash_entry *old)
 {
-  int k = calc_hash(dst);
-  struct hash_entry *old = find_entry(dst);
+  int k = calc_hash(old->dst);
 
-  if(old == NULL) return;
   if(old->prev != NULL) old->prev->next = old->next;
   if(old->next != NULL) old->next->prev = old->prev;
   if(h[k] == old) h[k] = old->next;
   free(old);
+}
+
+void delete_hash(char *dst)
+{
+  struct hash_entry *old = find_entry(dst);
+
+  if(old == NULL) return;
+  delete_hash_entry(old);
 }
 
 static void for_all_hash(void (*f)(struct hash_entry *, void *), void *arg)
@@ -126,4 +135,39 @@ void print_hash(char *(*port_id)(void *))
 					 port_id :	port_id });
 
   for_all_hash(print_hash_entry, &p);
+}
+
+#define GC_INTERVAL 2
+#define GC_EXPIRE 100
+
+static void gc(struct hash_entry *e, void *now)
+{
+  time_t t = *(time_t *) now;
+
+  if(e->last_seen + GC_EXPIRE < t)
+    delete_hash_entry(e);
+}
+
+static void sig_alarm(int sig)
+{
+  struct itimerval it;
+  time_t t = time(NULL);
+  for_all_hash(&gc, &t);
+
+  it.it_value.tv_sec = GC_INTERVAL;
+  it.it_value.tv_usec = 0 ;
+  setitimer(ITIMER_REAL, &it, NULL);
+}
+
+void hash_init(void)
+{
+  struct sigaction sa;
+
+  sa.sa_handler = sig_alarm;
+  sa.sa_flags = SA_RESTART;
+  if(sigaction(SIGALRM, &sa, NULL) < 0){
+    perror("Setting handler for SIGALRM");
+    return;
+  }
+  kill(getpid(), SIGALRM);
 }

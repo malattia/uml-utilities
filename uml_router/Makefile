@@ -1,9 +1,15 @@
-OBJS = uml_switch.o hash.o
+TUNTAP = $(shell [ -e /usr/include/linux/if_tun.h ] && echo -DTUNTAP)
+
+OBJS = hash.o port.o uml_switch.o 
 BIN = uml_switch
-CFLAGS = -g -Wall
+CFLAGS = -g -Wall $(TUNTAP)
 
 BIN_DIR = /usr/bin
 LIB_DIR = /usr/lib/uml
+
+ifneq ($(TUNTAP),)
+	OBJS += tuntap.o
+endif
 
 all : $(BIN)
 
