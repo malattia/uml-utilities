@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -41,16 +42,43 @@ struct packet {
   unsigned char data[1500];
 };
 
-struct connection *head = NULL;
-fd_set perm_fds;
-int max_fd = -1;
+static struct connection *head = NULL;
+static fd_set perm_fds;
+static int max_fd = -1;
+static char *prog;
 
 static char *ctl_socket = "/tmp/uml.ctl";
 static char *data_socket = "/tmp/uml.data";
 
+static void cleanup(void)
+{
+  if(unlink(ctl_socket) < 0){
+    printf("Couldn't remove control socket '%s' : ", ctl_socket);
+    perror("");
+  }
+  if(unlink(data_socket) < 0){
+    printf("Couldn't remove data socket '%s' : ", data_socket);
+    perror("");
+  }
+}
+
+static void sig_handler(int sig)
+{
+  printf("Caught signal %d, cleaning up and exiting\n", sig);
+  cleanup();
+  signal(sig, SIG_DFL);
+  kill(getpid(), sig);
+}
+
+static void close_descriptor(int fd)
+{
+  FD_CLR(fd, &perm_fds);
+  close(fd);
+}
+
 static void free_connection(struct connection *conn)
 {
-  close(conn->control);
+  close_descriptor(conn->control);
   FD_CLR(conn->control, &perm_fds);
   if(conn->prev) conn->prev->next = conn->next;
   else head = conn->next;
@@ -61,12 +89,21 @@ static void free_connection(struct connection *conn)
 static void service_connection(struct connection *conn)
 {
   struct request req;
+  int n;
 
-  if(read(conn->control, &req, sizeof(req)) != sizeof(req)){
-    if(errno != 0) perror("Reading request");
+  n = read(conn->control, &req, sizeof(req));
+  if(n < 0){
+    perror("Reading request");
     free_connection(conn);
     return;
   }
+  else if(n == 0){
+    printf("Disconnect from hw address %02x:%02x:%02x:%02x:%02x:%02x\n",
+	   conn->addr[0], conn->addr[1], conn->addr[2], conn->addr[3], 
+	   conn->addr[4], conn->addr[5]);
+    free_connection(conn);
+    return;
+  }    
   switch(req.type){
   default:
     printf("Bad request type : %d\n", req.type);
@@ -111,8 +148,13 @@ static void new_connection(int fd)
   if(len < 0){
     if(errno != EAGAIN){
       perror("Reading request");
-      close(fd);
+      close_descriptor(fd);
     }
+    return;
+  }
+  else if(len == 0){
+    printf("EOF from new connection\n");
+    close_descriptor(fd);
     return;
   }
   switch(req.type){
@@ -120,7 +162,7 @@ static void new_connection(int fd)
     conn = malloc(sizeof(struct connection));
     if(conn == NULL){
       perror("malloc");
-      close(fd);
+      close_descriptor(fd);
       return;
     }
     conn->next = head;
@@ -130,10 +172,13 @@ static void new_connection(int fd)
     memcpy(conn->addr, req.u.new_control.addr, sizeof(conn->addr));
     conn->name = req.u.new_control.name;
     head = conn;
+    printf("New connection - hw address %02x:%02x:%02x:%02x:%02x:%02x\n",
+	   conn->addr[0], conn->addr[1], conn->addr[2], conn->addr[3], 
+	   conn->addr[4], conn->addr[5]);
     break;
   default:
     printf("Bad request type : %d\n", req.type);
-    close(fd);
+    close_descriptor(fd);
   }
 }
 
@@ -185,7 +230,7 @@ int still_used(struct sockaddr_un *sun)
   if(connect(test_fd, (struct sockaddr *) sun, sizeof(*sun)) < 0){
     if(errno == ECONNREFUSED){
       if(unlink(sun->sun_path) < 0){
-	fprintf(stderr, "Failed to removed unused socket '%s':", 
+	fprintf(stderr, "Failed to removed unused socket '%s': ", 
 		sun->sun_path);
 	perror("");
       }
@@ -197,7 +242,7 @@ int still_used(struct sockaddr_un *sun)
   return(ret);
 }
 
-void bind_socket(int fd, const char *name)
+int bind_socket(int fd, const char *name)
 {
   struct sockaddr_un sun;
 
@@ -205,16 +250,75 @@ void bind_socket(int fd, const char *name)
   strcpy(sun.sun_path, name);
   
   if(bind(fd, (struct sockaddr *) &sun, sizeof(sun)) < 0){
-    if((errno != EADDRINUSE) || still_used(&sun)){
-      perror("bind");
-      exit(1);
-    }
+    if((errno == EADDRINUSE) && still_used(&sun)) return(EADDRINUSE);
     else if(bind(fd, (struct sockaddr *) &sun, sizeof(sun)) < 0){
       perror("bind");
-      exit(1);
+      return(EPERM);
     }
   }
+  return(0);
+}
 
+void bind_sockets(int ctl_fd, const char *ctl_name, 
+		  int data_fd, const char *data_name)
+{
+  int ctl_err, ctl_present = 0, ctl_used = 0;
+  int data_err, data_present = 0, data_used = 0;
+  int try_remove_ctl, try_remove_data;
+
+  ctl_err = bind_socket(ctl_fd, ctl_name);
+  if(ctl_err != 0) ctl_present = 1;
+  if(ctl_err == EADDRINUSE) ctl_used = 1;
+
+  data_err = bind_socket(data_fd, data_name);
+  if(data_err != 0) data_present = 1;
+  if(data_err == EADDRINUSE) data_used = 1;
+
+  if(!ctl_err && !data_err) return;
+
+  unlink(ctl_name);
+  unlink(data_name);
+
+  try_remove_ctl = ctl_present;
+  try_remove_data = data_present;
+  if(ctl_present && ctl_used){
+    fprintf(stderr, "The control socket '%s' has another server "
+	    "attached to it\n", ctl_name);
+    try_remove_ctl = 0;
+  }
+  else if(ctl_present && !ctl_used)
+    fprintf(stderr, "The control socket '%s' exists, isn't used, but couldn't "
+	    "be removed\n", ctl_name);
+  if(data_present && data_used){
+    fprintf(stderr, "The data socket '%s' has another server "
+	    "attached to it\n", data_name);
+    try_remove_data = 0;
+  }
+  else if(data_present && !data_used)
+    fprintf(stderr, "The data socket '%s' exists, isn't used, but couldn't "
+	    "be removed\n", data_name);
+  if(try_remove_ctl || try_remove_data){
+    fprintf(stderr, "You can either\n");
+    if(try_remove_ctl && !try_remove_data) 
+      fprintf(stderr, "\tremove '%s'\n", ctl_socket);
+    else if(!try_remove_ctl && try_remove_data) 
+      fprintf(stderr, "\tremove '%s'\n", data_socket);
+    else fprintf(stderr, "\tremove '%s' and '%s'\n", ctl_socket, data_socket);
+    fprintf(stderr, "\tor rerun with different, unused filenames for "
+	    "sockets:\n");
+    fprintf(stderr, "\t\t%s -unix <control> <data>\n", prog);
+    fprintf(stderr, "\t\tand run the UMLs with "
+	    "'eth0=daemon,,unix,<control>,<data>\n");
+    exit(1);
+  }
+  else {
+    fprintf(stderr, "You should rerun with different, unused filenames for "
+	    "sockets:\n");
+    fprintf(stderr, "\t%s -unix <control> <data>\n", prog);
+    fprintf(stderr, "\tand run the UMLs with "
+	    "'eth0=daemon,,unix,<control>,<data>'\n");
+    exit(1);
+  }
 }
 
 static void Usage(void)
@@ -227,6 +331,7 @@ int main(int argc, char **argv)
 {
   int connect_fd, data_fd, n, one = 1;
 
+  prog = argv[0];
   if(argc > 1){
     if(!strcmp(argv[1], "-unix")){
       if(argc < 4) Usage();
@@ -248,11 +353,6 @@ int main(int argc, char **argv)
     perror("Setting O_NONBLOCK on connection fd");
     exit(1);
   }
-  bind_socket(connect_fd, ctl_socket);
-  if(listen(connect_fd, 15) < 0){
-    perror("listen");
-    exit(1);
-  }
   if((data_fd = socket(PF_UNIX, SOCK_DGRAM, 0)) < 0){
     perror("socket");
     exit(1);
@@ -261,14 +361,27 @@ int main(int argc, char **argv)
     perror("Setting O_NONBLOCK on data fd");
     exit(1);
   }
-  bind_socket(data_fd, data_socket);
-    
+
+  bind_sockets(connect_fd, ctl_socket, data_fd, data_socket);
+
+  if(listen(connect_fd, 15) < 0){
+    perror("listen");
+    exit(1);
+  }
+
+  if(signal(SIGINT, sig_handler) < 0)
+    perror("Setting handler for SIGINT");
+
+  printf("%s attached to unix sockets '%s' and '%s'\n", prog, ctl_socket,
+	 data_socket);
   FD_ZERO(&perm_fds);
+  FD_SET(0, &perm_fds);
   FD_SET(connect_fd, &perm_fds);
   FD_SET(data_fd, &perm_fds);
   max_fd = (connect_fd > data_fd ? connect_fd : data_fd);
   while(1){
     fd_set temp;
+    char buf[128];
 
     temp = perm_fds;
     n = select(max_fd + 1, &temp, NULL, NULL, NULL);
@@ -276,7 +389,18 @@ int main(int argc, char **argv)
       perror("select");
       break;
     }
-    if(FD_ISSET(connect_fd, &temp)){
+    if(FD_ISSET(0, &temp)){
+      n = read(0, buf, sizeof(buf));
+      if(n < 0){
+	perror("Reading from stdin");
+	break;
+      }
+      else if(n == 0){
+	printf("EOF on stdin, cleaning up and exiting\n");
+	break;
+      }
+    }
+    else if(FD_ISSET(connect_fd, &temp)){
       accept_connection(connect_fd);
       FD_CLR(connect_fd, &temp);
     }
@@ -286,5 +410,6 @@ int main(int argc, char **argv)
     }
     handle_connections(&temp, max_fd + 1);
   }
+  cleanup();
   return 0;
 }
