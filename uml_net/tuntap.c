@@ -34,6 +34,9 @@ static void tuntap_up(int fd, char *gate_addr)
   msg.msg_control = NULL;
   msg.msg_controllen = 0;
 
+  iov[0].iov_base = NULL;
+  iov[0].iov_len = 0;
+
   if(setreuid(0, 0) < 0){
     output_errno(&output, "setreuid to root failed : ");
     goto out;
@@ -55,13 +58,17 @@ static void tuntap_up(int fd, char *gate_addr)
   memset(&ifr, 0, sizeof(ifr));
   ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
   ifr.ifr_name[0] = '\0';
+  sleep(100000);
   if(ioctl(tap_fd, TUNSETIFF, (void *) &ifr) < 0){
-    output_errno(&output, "TUNSETIFF");
+    output_errno(&output, "TUNSETIFF : ");
     goto out;
   }
 
   if((*gate_addr != '\0') && do_exec(ifconfig_argv, 1, &output)) goto out;
   forward_ip(&output);
+
+  iov[0].iov_base = ifr.ifr_name;
+  iov[0].iov_len = IFNAMSIZ;
 
   msg.msg_control = anc;
   msg.msg_controllen = sizeof(anc);
@@ -77,8 +84,6 @@ static void tuntap_up(int fd, char *gate_addr)
   *fd_ptr = tap_fd;
 
  out:
-  iov[0].iov_base = ifr.ifr_name;
-  iov[0].iov_len = IFNAMSIZ;
   iov[1].iov_base = output.buffer;
   iov[1].iov_len = output.used;
 
