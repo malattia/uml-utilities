@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <ctype.h>
+#include <stdint.h>
 #include <sys/stat.h>
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -64,16 +65,16 @@ static int switch_common(char *name)
 #define MIN(a,b) ((a)<(b) ? (a):(b))
 
 struct mconsole_request {
-	unsigned long magic;
-	int version;
-	int len;
+	uint32_t magic;
+	uint32_t version;
+	uint32_t len;
 	char data[MCONSOLE_MAX_DATA];
 };
 
 struct mconsole_reply {
-	int err;
-	int more;
-	int len;
+	uint32_t err;
+	uint32_t more;
+	uint32_t len;
 	char data[MCONSOLE_MAX_DATA];
 };
 
