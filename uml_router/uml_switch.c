@@ -376,8 +376,8 @@ int main(int argc, char **argv)
       if(argc < 3) Usage();
       ctl_socket = argv[1];
       data_socket = argv[2];
-      argc -= 2;
-      argv += 2;
+      argc -= 3;
+      argv += 3;
     }
     else if(!strcmp(argv[0], "-hub")){
       printf("%s will be a hub instead of a switch\n", prog);
