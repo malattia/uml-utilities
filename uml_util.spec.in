@@ -10,13 +10,14 @@ Release:   %{rel}
 Copyright: GPL
 Packager:  Someone
 URL:       http://user-mode-linux.sourceforge.net/index.html
-Source:    http://prdownloads.sourceforge.net/user-mode-linux/uml_utilities_%{version}.tar.bz2
-BuildRoot: %{_tmppath}/%{name}-%{version}-root
+Source:    http://prdownloads.sourceforge.net/user-mode-linux/uml_utilities_%{ver}.tar.bz2
+BuildRoot: %{_tmppath}/%{name}-%{ver}-root
 Group:     System
 Summary: Utilities for user-mode linux kernel
 
 %description 
-This package contains the utilities for user-mode linux for networking, COW, etc.
+This package contains the utilities for user-mode linux for networking, 
+COW, etc.
 
 
 %prep
@@ -28,15 +29,16 @@ make DESTDIR=$RPM_BUILD_ROOT
 %install
 make install DESTDIR=$RPM_BUILD_ROOT
 
-%files 
-%{_bindir}/uml_mconsole
-%{_bindir}/uml_moo
-%{_bindir}/uml_switch
-%{_bindir}/uml_net
-%{_bindir}/mkrootfs
-%dir %{_libdir}/uml
-%{_libdir}/uml/functions
-%{_libdir}/uml/port-helper
+%files
+%attr(755,root,root)			%{_bindir}/jailtest
+%attr(755,root,root)			%{_bindir}/mkrootfs
+%attr(755,root,root)			%{_bindir}/tunctl
+%attr(755,root,root)			%{_bindir}/uml_mconsole
+%attr(755,root,root)			%{_bindir}/uml_moo
+%attr(4755,root,root)			%{_bindir}/uml_net
+%attr(755,root,root)			%{_bindir}/uml_switch
+%attr(755,root,root)		%dir	%{_libdir}/uml
+%attr(755,root,root)			%{_libdir}/uml/functions
+%attr(755,root,root)			%{_libdir}/uml/port-helper
 
 %clean
-
