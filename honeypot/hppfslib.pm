@@ -1,5 +1,5 @@
 # 
-# Copyright (C) 2002 Jeff Dike (jdike@karaya.com)
+# Copyright (C) 2002, 2003 Jeff Dike (jdike@karaya.com)
 # Licensed under the GPL
 #
 
@@ -11,13 +11,16 @@ use vars       qw(@ISA @EXPORT);
 use strict;
 
 @ISA         = qw(Exporter);
-@EXPORT      = qw(&remove_line &host &proc);
+@EXPORT      = qw(&remove_lines &host &proc);
 
-sub remove_line {
-    my $str = shift;
+sub remove_lines {
+    my @remove = @_;
 
     return( [ sub { my $input = shift;
-		    $input =~ s/^.*$str.*\n$//m;
+
+		    foreach my $str (@remove){
+			$input =~ s/^.*$str.*\n//mg;
+		    }
 		    return($input) }, 
 	      "rw" ] );
 }
