@@ -152,9 +152,60 @@ static struct cmd cmds[] = {
   { NULL, default_cmd }
 };
 
+/* sends a command */
+int issue_command(int fd, char *command)
+{
+  char *ptr;
+  int i;
+
+  /* Trim trailing spaces left by readline's filename completion */
+  ptr = &command[strlen(command) - 1];
+  while(isspace(*ptr)) *ptr-- = '\0';
+    
+  for(i = 0; i < sizeof(cmds)/sizeof(cmds[0]); i++){
+    if((cmds[i].command == NULL) || 
+       !strncmp(cmds[i].command, command, strlen(cmds[i].command))){
+      (*cmds[i].proc)(fd, command);
+      break;
+    }
+  }
+    
+  /* in future, return command status */
+  return 0;
+}
+
+/* sends a command in argv style array */
+int issue_commandv(int fd, char **argv)
+{
+  char *command;
+  int len, i, status;
+
+  len = 1;  /* space for trailing null */
+  for(i = 0; argv[i] != NULL; i++)
+    len += strlen(argv[i]) + 1;  /* space for space */
+
+  command = malloc(len);
+  if(command == NULL){
+    perror("issue_command");
+    return(-1);
+  }
+  command[0] = '\0';
+
+  for(i = 0; argv[i] != NULL; i++) {
+    strcat(command, argv[i]);
+    if(argv[i+1] != NULL) strcat(command, " ");
+  }
+
+  status = issue_command(fd, command);
+
+  free(command);
+
+  return status;
+}
+
 static void Usage(void)
 {
-  fprintf(stderr, "Usage : uml_mconsole socket-name\n");
+  fprintf(stderr, "Usage : uml_mconsole socket-name [command]\n");
   exit(1);
 }
 
@@ -182,9 +233,11 @@ int main(int argc, char **argv)
     exit(1);
   }
 
+  if(argc>2)
+    return issue_commandv(fd, argv+2);
+
   while(1){
-    char *command, *ptr, prompt[1 + sizeof(uml_name) + 2 + 1];
-    int i;
+    char *command, prompt[1 + sizeof(uml_name) + 2 + 1];
 
     sprintf(prompt, "(%s) ", uml_name);
     command = readline(prompt);
@@ -192,17 +245,7 @@ int main(int argc, char **argv)
 
     if(*command) add_history(command);
 
-    /* Trim trailing spaces left by readline's filename completion */
-    ptr = &command[strlen(command) - 1];
-    while(isspace(*ptr)) *ptr-- = '\0';
-
-    for(i = 0; i < sizeof(cmds)/sizeof(cmds[0]); i++){
-      if((cmds[i].command == NULL) || 
-	 !strncmp(cmds[i].command, command, strlen(cmds[i].command))){
-	(*cmds[i].proc)(fd, command);
-	break;
-      }
-    }
+    issue_command(fd,command);
     free(command);
   }
   printf("\n");
