@@ -1,4 +1,4 @@
-SUBDIRS = mconsole moo uml_net uml_router
+SUBDIRS = mconsole moo port-helper uml_net uml_router
 TARBALL = uml_utilities_$(shell date +%Y%m%d).tar
 
 all install: 
