@@ -12,14 +12,12 @@
 #include "host.h"
 #include "output.h"
 
-static void slip_up(char **argv, struct output *output)
+static void slip_up(int fd, char *gate_addr, char *remote_addr, 
+		    char *netmask, struct output *output)
 {
-  int fd = atoi(argv[0]);
-  char *gate_addr = argv[1];
-  char *remote_addr = argv[2];
   char slip_name[sizeof("slxxxx\0")];
-  char *up_argv[] = { "ifconfig", slip_name, gate_addr, "pointopoint", 
-		      remote_addr, "mtu", "1500", "up", NULL };
+  char *up_argv[] = { "ifconfig", slip_name, gate_addr, "mtu", "1500", "up", 
+		      NULL };
   int disc, sencap, n;
   
   disc = N_SLIP;
@@ -39,44 +37,48 @@ static void slip_up(char **argv, struct output *output)
     write_output(1, output);
     exit(1);
   }
-  route_and_arp(slip_name, remote_addr, 0, output);
   forward_ip(output);
-  write_output(1, output);
+  if(remote_addr != NULL)
+    route_and_arp(slip_name, remote_addr, netmask, 0, output);
 }
 
-static void slip_down(char **argv, struct output *output)
+static void slip_down(char *dev, char *remote_addr, char *netmask,
+		      struct output *output)
 {
-  int fd = atoi(argv[0]);
-  char *remote_addr = argv[1];
-  char slip_name[sizeof("slxxxx\0")];
-  char *down_argv[] = { "ifconfig", slip_name, "0.0.0.0", "down", NULL };
-  int n, disc;
+  char *down_argv[] = { "ifconfig", dev, "0.0.0.0", "down", NULL };
 
-  if((n = ioctl(fd, TIOCGETD, &disc)) < 0){
-    output_errno(output, "Getting slip line discipline");
-    write_output(1, output);
-    exit(1);
-  }
-  sprintf(slip_name, "sl%d", n);
-  no_route_and_arp(slip_name, remote_addr, output);
+  if(remote_addr != NULL)
+    no_route_and_arp(dev, remote_addr, netmask, output);
   if(do_exec(down_argv, 1, output)){
     write_output(1, output);
     exit(1);
   }
-  write_output(1, output);
+}
+
+static void slip_name(int fd, char *name, struct output *output)
+{
+  if(ioctl(fd, SIOCGIFNAME, name) < 0){
+    output_errno(output, "Getting slip line discipline");
+    write_output(1, output);
+    exit(1);
+  }
 }
 
 void slip_v0_v2(int argc, char **argv)
 {
-  char *op = argv[0];
+  char *op = argv[0], dev[sizeof("slnnnnn\0")];
 
   if(setreuid(0, 0) < 0){
     perror("slip - setreuid failed");
     exit(1);
   }
-
-  if(!strcmp(argv[0], "up")) slip_up(&argv[1], NULL);
-  else if(!strcmp(argv[0], "down")) slip_down(&argv[1], NULL);
+  
+  if(!strcmp(op, "up")) 
+    slip_up(atoi(argv[1]), argv[2], argv[3], NULL, NULL);
+  else if(!strcmp(op, "down")){
+    slip_name(atoi(argv[1]), dev, NULL);
+    slip_down(dev, argv[2], NULL, NULL);
+  }
   else {
     printf("slip - Unknown op '%s'\n", op);
     exit(1);
@@ -86,6 +88,29 @@ void slip_v0_v2(int argc, char **argv)
 void slip_v3(int argc, char **argv)
 {
   struct output output = INIT_OUTPUT;
+  char *op = argv[0], dev[sizeof("slnnnnn\0")];
+
+  if(setreuid(0, 0) < 0){
+    perror("slip - setreuid failed");
+    exit(1);
+  }
+
+  if(!strcmp(op, "up")) 
+    slip_up(atoi(argv[1]), argv[2], argv[3], NULL, &output);
+  else if(!strcmp(op, "down")){
+    slip_name(atoi(argv[1]), dev, &output);
+    slip_down(dev, argv[2], NULL, &output);
+  }
+  else {
+    printf("slip - Unknown op '%s'\n", op);
+    exit(1);
+  }
+  write_output(1, &output);
+}
+
+void slip_v4(int argc, char **argv)
+{
+  struct output output = INIT_OUTPUT;
   char *op = argv[0];
 
   if(setreuid(0, 0) < 0){
@@ -93,10 +118,15 @@ void slip_v3(int argc, char **argv)
     exit(1);
   }
 
-  if(!strcmp(argv[0], "up")) slip_up(&argv[1], &output);
-  else if(!strcmp(argv[0], "down")) slip_down(&argv[1], &output);
+  if(!strcmp(op, "up")) 
+    slip_up(0, argv[1], argv[2], NULL, &output);
+  else if(!strcmp(op, "down")){
+    slip_down(argv[1], NULL, NULL, &output);
+  }
   else {
     printf("slip - Unknown op '%s'\n", op);
     exit(1);
   }
+  write_output(1, &output);
 }
+

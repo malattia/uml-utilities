@@ -76,7 +76,8 @@ static int maybe_insmod(char *dev, struct output *output)
 #define max(i, j) (((i) > (j)) ? (i) : (j))
 
 static void ethertap(char *dev, int data_fd, int control_fd, char *gate, 
-		     char *remote, int collect_output)
+		     char *remote, int collect_output, 
+		     int (*control_cb)(int, char *, struct output *))
 {
   struct output output = INIT_OUTPUT, *o = NULL;
   int ip[4];
@@ -98,7 +99,7 @@ static void ethertap(char *dev, int data_fd, int control_fd, char *gate,
 
     if(do_exec(ifconfig_argv, 1, o)) output_fail(o, control_fd);
 
-    if((remote != NULL) && route_and_arp(dev, remote, 1, o)) 
+    if((remote != NULL) && route_and_arp(dev, remote, NULL, 1, o)) 
       output_fail(o, control_fd);
 
     forward_ip(o);
@@ -164,20 +165,58 @@ static void ethertap(char *dev, int data_fd, int control_fd, char *gate,
       if(n < 0) perror("write");      
     }
     else if(FD_ISSET(control_fd, &fds)){
-      struct addr_change change;
-      n = read(control_fd, &change, sizeof(change));
-      if(n == sizeof(change)) address_change(&change, dev, o);
-      else if(n == 0) break;
-      else {
-	fprintf(stderr, "read from UML failed, n = %d, errno = %d\n", n, 
-		errno);
-	break;
-      }
-      if(o) write_output(control_fd, o);
+      if((*control_cb)(control_fd, dev, o)) break;
     }
   }
   if(gate != NULL) do_exec(down_argv, 0, NULL);
-  if(remote != NULL) no_route_and_arp(dev, remote, NULL);
+  if(remote != NULL) no_route_and_arp(dev, remote, NULL, NULL);
+}
+
+struct addr_change_v1_v3 {
+  enum change_type what;
+  unsigned char addr[4];
+};
+
+static int control_v1_v3(int fd, char *dev, struct output *output)
+{
+  struct addr_change_v1_v3 change;
+  int n;
+
+  n = read(fd, &change, sizeof(change));
+  if(n == sizeof(change)) 
+    address_change(change.what, change.addr, dev, NULL, output);
+  else if(n == 0) return(1);
+  else {
+    fprintf(stderr, "read from UML failed, n = %d, errno = %d\n", n, 
+	    errno);
+    return(1);
+  }
+  if(output) write_output(fd, output);
+  return(0);
+}
+
+struct addr_change_v4 {
+  enum change_type what;
+  unsigned char addr[4];
+  unsigned char netmask[4];
+};
+
+static int control_v4(int fd, char *dev, struct output *output)
+{
+  struct addr_change_v4 change;
+  int n;
+
+  n = read(fd, &change, sizeof(change));
+  if(n == sizeof(change)) 
+    address_change(change.what, change.addr, dev, change.netmask, output);
+  else if(n == 0) return(1);
+  else {
+    fprintf(stderr, "read from UML failed, n = %d, errno = %d\n", n, 
+	    errno);
+    return(1);
+  }
+  if(output) write_output(fd, output);
+  return(0);
 }
 
 void ethertap_v0(int argc, char **argv)
@@ -191,7 +230,7 @@ void ethertap_v0(int argc, char **argv)
     gate_addr = argv[2];
     remote_addr = argv[3];
   }
-  ethertap(dev, fd, fd, gate_addr, remote_addr, 0);
+  ethertap(dev, fd, -1, gate_addr, remote_addr, 0, NULL);
 }
 
 void ethertap_v1_v2(int argc, char **argv)
@@ -202,16 +241,23 @@ void ethertap_v1_v2(int argc, char **argv)
   char *gate_addr = NULL;
 
   if(argc > 3) gate_addr = argv[3];
-  ethertap(dev, data_fd, control_fd, gate_addr, NULL, 0);
+  ethertap(dev, data_fd, control_fd, gate_addr, NULL, 0, control_v1_v3);
 }
 
 void ethertap_v3(int argc, char **argv)
 {
   char *dev = argv[0];
   int data_fd = atoi(argv[1]);
-  char *gate_addr = NULL;
+  char *gate = argv[2];
 
-  if(argc > 2) gate_addr = argv[2];
-  ethertap(dev, data_fd, 1, gate_addr, NULL, 1);
+  ethertap(dev, data_fd, 1, gate, NULL, 1, control_v1_v3);
 }
 
+void ethertap_v4(int argc, char **argv)
+{
+  char *dev = argv[0];
+  int data_fd = atoi(argv[1]);
+  char *gate = argv[2];
+
+  ethertap(dev, data_fd, 1, gate, NULL, 1, control_v4);
+}

@@ -7,43 +7,69 @@
 #include <unistd.h>
 #include <string.h>
 
-#define CURRENT_VERSION (3)
+#define CURRENT_VERSION (4)
 
 extern void ethertap_v0(int argc, char **argv);
 extern void ethertap_v1_v2(int argc, char **argv);
 extern void ethertap_v1_v2(int argc, char **argv);
 extern void ethertap_v3(int argc, char **argv);
+extern void ethertap_v4(int argc, char **argv);
 
 void (*ethertap_handlers[])(int argc, char **argv) = {
   ethertap_v0, 
   ethertap_v1_v2,
   ethertap_v1_v2,
   ethertap_v3,
+  ethertap_v4,
 };
 
 extern void slip_v0_v2(int argc, char **argv);
 extern void slip_v3(int argc, char **argv);
+extern void slip_v4(int argc, char **argv);
 
 void (*slip_handlers[])(int argc, char **argv) = { 
   slip_v0_v2, 
   slip_v0_v2,
   slip_v0_v2, 
   slip_v3, 
+  slip_v4, 
 };
 
 #ifdef TUNTAP
 
 extern void tuntap_v2(int argc, char **argv);
 extern void tuntap_v3(int argc, char **argv);
+extern void tuntap_v4(int argc, char **argv);
 
 void (*tuntap_handlers[])(int argc, char **argv) = {
   NULL,
   NULL,
   tuntap_v2,
   tuntap_v3,
+  tuntap_v4,
 };
 
 #endif
+
+extern void add_address_v4(int argc, char **argv);
+
+void (*add_handlers[])(int argc, char **argv) = {
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  add_address_v4,
+};
+
+extern void del_address_v4(int argc, char **argv);
+
+void (*del_handlers[])(int argc, char **argv) = {
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  del_address_v4,
+};
 
 int main(int argc, char **argv)
 {
@@ -79,6 +105,8 @@ int main(int argc, char **argv)
 #ifdef TUNTAP
   else if(!strcmp(transport, "tuntap")) handlers = tuntap_handlers;
 #endif
+  else if(!strcmp(transport, "add")) handlers = add_handlers;
+  else if(!strcmp(transport, "del")) handlers = del_handlers;
   else {
     printf("Unknown transport : '%s'\n", transport);
     exit(1);

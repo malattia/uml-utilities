@@ -12,11 +12,12 @@
 #include <sys/un.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <linux/if_tun.h>
 #include "host.h"
 #include "output.h"
 
-static void tuntap_up(char *dev, int fd, char *gate_addr)
+static void tuntap_up(int fd, char *gate_addr)
 {
   struct ifreq ifr;
   int tap_fd, *fd_ptr;
@@ -93,27 +94,13 @@ static void tuntap_up(char *dev, int fd, char *gate_addr)
   }
 }
 
-static void tuntap_change(int argc, char **argv, struct output *output)
-{
-  char *op = argv[0];
-  char *dev = argv[1];
-  char *address = argv[2];
-
-  if(setreuid(0, 0) < 0){
-    perror("setreuid");
-    exit(1);
-  }
-  if(!strcmp(op, "add")) route_and_arp(dev, address, 0, output);
-  else no_route_and_arp(dev, address, output);
-}
-
 void tuntap_v2(int argc, char **argv)
 {
   char *op = argv[0];
 
-  if(!strcmp(op, "up")) tuntap_up(argv[1], atoi(argv[2]), argv[3]);
+  if(!strcmp(op, "up")) tuntap_up(atoi(argv[2]), argv[3]);
   else if(!strcmp(op, "add") || !strcmp(op, "del"))
-    tuntap_change(argc, argv, NULL);
+    change_addr(argv[1], argv[2], argv[3], NULL, NULL);
   else {
     fprintf(stderr, "Bad tuntap op : '%s'\n", op);
     exit(1);
@@ -125,13 +112,28 @@ void tuntap_v3(int argc, char **argv)
   char *op = argv[0];
   struct output output = INIT_OUTPUT;
 
-  if(!strcmp(op, "up")) tuntap_up(argv[1], 1, argv[2]);
+  if(!strcmp(op, "up")) tuntap_up(1, argv[2]);
   else if(!strcmp(op, "add") || !strcmp(op, "del"))
-    tuntap_change(argc, argv, &output);
+    change_addr(op, argv[1], argv[2], NULL, &output);
   else {
     fprintf(stderr, "Bad tuntap op : '%s'\n", op);
     exit(1);
   }
-  write(1, &output.used, sizeof(output.used));
-  write(1, output.buffer, output.used);
+  write_output(1, &output);
 }
+
+void tuntap_v4(int argc, char **argv)
+{
+  char *op = argv[0];
+  struct output output = INIT_OUTPUT;
+
+  if(!strcmp(op, "up")) tuntap_up(1, argv[1]);
+  else if(!strcmp(op, "add") || !strcmp(op, "del"))
+    change_addr(op, argv[1], argv[2], argv[3], &output);
+  else {
+    fprintf(stderr, "Bad tuntap op : '%s'\n", op);
+    exit(1);
+  }
+  write_output(1, &output);
+}
+

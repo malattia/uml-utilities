@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include "output.h"
@@ -58,7 +59,49 @@ int do_exec(char **args, int need_zero, struct output *output)
   return(0);
 }
 
-int route_and_arp(char *dev, char *addr, int need_route, struct output *output)
+static void local_net_do(char **argv, int if_index, char *addr_str, 
+			 char *netmask_str, char *skip_dev,
+			 struct output *output)
+{
+  FILE *fp;
+  unsigned long addr, netmask, if_addr;
+  int a[4], n[4];
+  char buf[1024], iface[32], out[1024];
+
+  if(sscanf(addr_str, "%d.%d.%d.%d", &a[0], &a[1], &a[2], &a[3]) != 4){
+    add_output(output, "local_net_do didn't parse address", -1);
+    return;
+  }
+  addr = (a[3] << 24) | (a[2] << 16) | (a[1] << 8) | a[0];
+  if(sscanf(netmask_str, "%d.%d.%d.%d", &n[0], &n[1], &n[2], &n[3]) != 4){
+    add_output(output, "local_net_do didn't parse netmask", -1);
+    return;
+  }
+  netmask = (n[3] << 24) | (n[2] << 16) | (n[1] << 8) | n[0];
+  argv[if_index] = iface;
+  if((fp = fopen("/proc/net/route", "r")) == NULL){
+    output_errno(output, "Couldn't open /proc/net/route");
+    return;
+  }
+  if(fgets(buf, sizeof(buf), fp) == NULL) return;
+  buf[0] = '\0';
+  while(fgets(buf, sizeof(buf), fp) != NULL){
+    int n;
+    n = sscanf(buf, "%s %lx %*x %*x %*x %*x %*x", iface, &if_addr);
+    if(n != 2){
+      sprintf(out, "Didn't parse /proc/net/route, got %d\n on '%s'", n, buf);
+      add_output(output, out, -1);
+      return;
+    }
+    if(strcmp(skip_dev, iface) && ((addr & netmask) == (if_addr & netmask)))
+      do_exec(argv, 0, output);
+    buf[0] = '\0';
+  }
+  fclose(fp);
+}
+
+int route_and_arp(char *dev, char *addr, char *netmask, int need_route,
+		  struct output *output)
 {
   char echo[sizeof("echo 1 > /proc/sys/net/ipv4/conf/XXXXXXXXXX/proxy_arp")];
   char *echo_argv[] = { "bash", "-c", echo, NULL };
@@ -68,11 +111,13 @@ int route_and_arp(char *dev, char *addr, int need_route, struct output *output)
   if(do_exec(route_argv, need_route, output)) return(-1);
   sprintf(echo, "echo 1 > /proc/sys/net/ipv4/conf/%s/proxy_arp", dev);
   do_exec(echo_argv, 0, output);
-  do_exec(arp_argv, 0, output);
+  if(netmask) local_net_do(arp_argv, 3, addr, netmask, dev, output);
+  else do_exec(arp_argv, 0, output);
   return(0);
 }
 
-int no_route_and_arp(char *dev, char *addr, struct output *output)
+int no_route_and_arp(char *dev, char *addr, char *netmask, 
+		     struct output *output)
 {
   char echo[sizeof("echo 0 > /proc/sys/net/ipv4/conf/XXXXXXXXXX/proxy_arp")];
   char *no_echo_argv[] = { "bash", "-c", echo, NULL };
@@ -83,7 +128,8 @@ int no_route_and_arp(char *dev, char *addr, struct output *output)
   snprintf(echo, sizeof(echo), 
 	   "echo 0 > /proc/sys/net/ipv4/conf/%s/proxy_arp", dev);
   do_exec(no_echo_argv, 0, output);
-  do_exec(no_arp_argv, 0, output);
+  if(netmask) local_net_do(no_arp_argv, 2, addr, netmask, dev, output);
+  else do_exec(no_arp_argv, 0, output);
   return(0);
 }
 
@@ -94,22 +140,28 @@ void forward_ip(struct output *output)
   do_exec(forw_argv, 0, output);
 }
 
-void address_change(struct addr_change *change, char *dev, 
-		    struct output *output)
+void address_change(enum change_type what, unsigned char *addr_str, char *dev, 
+		    unsigned char *netmask_str, struct output *output)
 {
   char addr[sizeof("255.255.255.255\0")];
+  char netmask[sizeof("255.255.255.255\0")], *n = NULL;
 
-  sprintf(addr, "%d.%d.%d.%d", change->addr[0], change->addr[1], 
-	  change->addr[2], change->addr[3]);
-  switch(change->what){
+  sprintf(addr, "%d.%d.%d.%d", addr_str[0], addr_str[1], addr_str[2], 
+	  addr_str[3]);
+  if(netmask_str != NULL){
+    sprintf(netmask, "%d.%d.%d.%d", netmask_str[0], netmask_str[1], 
+	    netmask_str[2], netmask_str[3]);
+    n = netmask;
+  }
+  switch(what){
   case ADD_ADDR:
-    route_and_arp(dev, addr, 0, output);
+    route_and_arp(dev, addr, n, 0, output);
     break;
   case DEL_ADDR:
-    no_route_and_arp(dev, addr, output);
+    no_route_and_arp(dev, addr, n, output);
     break;
   default:
-    fprintf(stderr, "address_change - bad op : %d\n", change->what);
+    fprintf(stderr, "address_change - bad op : %d\n", what);
     return;
   }
 }
@@ -138,4 +190,39 @@ int mk_node(char *devname, int major, int minor)
   /* It doesn't exist. We can create it. */
 
   return(mknod(devname, S_IFCHR|S_IREAD|S_IWRITE, makedev(major, minor)));
+}
+
+void add_address_v4(int argc, char **argv)
+{
+  struct output output = INIT_OUTPUT;
+  
+  if(setreuid(0, 0) < 0){
+    output_errno(&output, "setreuid");
+    exit(1);
+  }
+  route_and_arp(argv[0], argv[1], argv[2], 0, &output);
+  write_output(1, &output);
+}
+
+void del_address_v4(int argc, char **argv)
+{
+  struct output output = INIT_OUTPUT;
+  
+  if(setreuid(0, 0) < 0){
+    output_errno(&output, "setreuid");
+    exit(1);
+  }
+  no_route_and_arp(argv[0], argv[1], argv[2], &output);
+  write_output(1, &output);
+}
+
+void change_addr(char *op, char *dev, char *address, char *netmask,
+		 struct output *output)
+{
+  if(setreuid(0, 0) < 0){
+    perror("setreuid");
+    exit(1);
+  }
+  if(!strcmp(op, "add")) route_and_arp(dev, address, netmask, 0, output);
+  else no_route_and_arp(dev, address, netmask, output);
 }
