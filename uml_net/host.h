@@ -22,5 +22,6 @@ extern void address_change(enum change_type what, unsigned char *addr_str,
 extern int mk_node(char *devname, int major, int minor);
 extern void change_addr(char *op, char *dev, char *address, char *netmask,
 			struct output *output);
+extern int is_a_device(char *dev);
 
 #endif

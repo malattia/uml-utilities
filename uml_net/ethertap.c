@@ -54,7 +54,8 @@ static int maybe_insmod(char *dev, struct output *output)
     output_errno(output, "socket");
     return(-1);
   }
-  strcpy(ifr.ifr_name, dev);
+  strncpy(ifr.ifr_name, dev, sizeof(ifr.ifr_name) - 1);
+  ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = '\0';
   if(ioctl(fd, SIOCGIFFLAGS, &ifr) == 0) return(0);
   if(errno != ENODEV){
     output_errno(output, "SIOCGIFFLAGS on tap device");
@@ -65,8 +66,10 @@ static int maybe_insmod(char *dev, struct output *output)
     add_output(output, buf, -1);
     return(-1);
   }
-  sprintf(unit_buf, "unit=%d", unit);
-  sprintf(ethertap_buf, "ethertap%d", unit);
+  snprintf(unit_buf, sizeof(unit_buf) - 1, "unit=%d", unit);
+  unit_buf[sizeof(unit_buf) - 1] = '\0';
+  snprintf(ethertap_buf, sizeof(ethertap_buf) - 1, "ethertap%d", unit);
+  ethertap_buf[sizeof(ethertap_buf) - 1] = '\0';
   do_exec(netlink_argv, 0, output);
   return(do_exec(ethertap_argv, 0, output));
 }
@@ -104,7 +107,13 @@ static void ethertap(char *dev, int data_fd, int control_fd, char *gate,
 
     forward_ip(o);
   }
-  sprintf(dev_file, "/dev/%s", dev);
+
+  if(!is_a_device(dev)){
+    add_output(o, "Device doesn't contain only alphanumeric characters", -1);
+    output_fail(o, control_fd);
+  }
+  snprintf(dev_file, sizeof(dev_file) - 1, "/dev/%s", dev);
+  dev_file[sizeof(dev_file) - 1] = '\0';
 
   /* do a mknod on it in case it doesn't exist. */
 

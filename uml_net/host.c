@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <ctype.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include "output.h"
@@ -87,7 +88,7 @@ static void local_net_do(char **argv, int if_index, char *addr_str,
   buf[0] = '\0';
   while(fgets(buf, sizeof(buf), fp) != NULL){
     int n;
-    n = sscanf(buf, "%s %lx %*x %*x %*x %*x %*x", iface, &if_addr);
+    n = sscanf(buf, "%32s %lx %*x %*x %*x %*x %*x", iface, &if_addr);
     if(n != 2){
       sprintf(out, "Didn't parse /proc/net/route, got %d\n on '%s'", n, buf);
       add_output(output, out, -1);
@@ -100,6 +101,16 @@ static void local_net_do(char **argv, int if_index, char *addr_str,
   fclose(fp);
 }
 
+int is_a_device(char *dev)
+{
+  int i;
+
+  for(i = 0; i < strlen(dev); i++){
+    if(!isalnum(dev[i])) return(0);
+  }
+  return(1);
+}
+
 int route_and_arp(char *dev, char *addr, char *netmask, int need_route,
 		  struct output *output)
 {
@@ -108,8 +119,15 @@ int route_and_arp(char *dev, char *addr, char *netmask, int need_route,
   char *route_argv[] = { "route", "add", "-host", addr, "dev", dev, NULL };
   char *arp_argv[] = { "arp", "-Ds", addr, "eth0",  "pub", NULL };
 
+  if(!is_a_device(dev)){
+    add_output(output, "Device doesn't contain only alphanumeric characters",
+	       -1);
+    return(-1);
+  }
   if(do_exec(route_argv, need_route, output)) return(-1);
-  sprintf(echo, "echo 1 > /proc/sys/net/ipv4/conf/%s/proxy_arp", dev);
+  snprintf(echo, sizeof(echo) - 1, 
+	   "echo 1 > /proc/sys/net/ipv4/conf/%s/proxy_arp", dev);
+  echo[sizeof(echo) - 1] = '\0';
   do_exec(echo_argv, 0, output);
   if(netmask) local_net_do(arp_argv, 3, addr, netmask, dev, output);
   else do_exec(arp_argv, 0, output);
@@ -124,9 +142,15 @@ int no_route_and_arp(char *dev, char *addr, char *netmask,
   char *no_route_argv[] = { "route", "del", "-host", addr, "dev", dev, NULL };
   char *no_arp_argv[] = { "arp", "-i", "eth0", "-d", addr, "pub", NULL };
 
+  if(!is_a_device(dev)){
+    add_output(output, "Device doesn't contain only alphanumeric characters",
+	       -1);
+    return(-1);
+  }
   do_exec(no_route_argv, 0, output);
-  snprintf(echo, sizeof(echo), 
+  snprintf(echo, sizeof(echo) - 1, 
 	   "echo 0 > /proc/sys/net/ipv4/conf/%s/proxy_arp", dev);
+  echo[sizeof(echo) - 1] = '\0';
   do_exec(no_echo_argv, 0, output);
   if(netmask) local_net_do(no_arp_argv, 2, addr, netmask, dev, output);
   else do_exec(no_arp_argv, 0, output);
@@ -146,11 +170,13 @@ void address_change(enum change_type what, unsigned char *addr_str, char *dev,
   char addr[sizeof("255.255.255.255\0")];
   char netmask[sizeof("255.255.255.255\0")], *n = NULL;
 
-  sprintf(addr, "%d.%d.%d.%d", addr_str[0], addr_str[1], addr_str[2], 
-	  addr_str[3]);
+  snprintf(addr, sizeof(addr) - 1, "%d.%d.%d.%d", addr_str[0], addr_str[1], 
+	   addr_str[2], addr_str[3]);
+  addr[sizeof(addr) - 1] = '\0';
   if(netmask_str != NULL){
-    sprintf(netmask, "%d.%d.%d.%d", netmask_str[0], netmask_str[1], 
-	    netmask_str[2], netmask_str[3]);
+    snprintf(netmask, sizeof(netmask) - 1, "%d.%d.%d.%d", netmask_str[0], 
+	     netmask_str[1], netmask_str[2], netmask_str[3]);
+    netmask[sizeof(netmask) - 1] = '\0';
     n = netmask;
   }
   switch(what){
