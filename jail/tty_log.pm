@@ -13,6 +13,7 @@ use vars       qw(@ISA @EXPORT);
 
 use strict;
 
+
 @ISA         = qw(Exporter);
 @EXPORT      = qw(&read_log &read_log_line);
 
@@ -61,9 +62,9 @@ sub read_log_line {
     my $handle = shift;
     my $wait = shift;
 
-    my $len = length(pack("iIiiII", "0" x 6));
+    my $record_len = length(pack("iIiiII", "0" x 6));
 
-    my $record = read_log_item($filename, $handle, $len, $wait);
+    my $record = read_log_item($filename, $handle, $record_len, $wait);
     !defined($record) and return(undef);
 
     my ($op, $tty, $len, $direction, $sec, $usecs) = 
@@ -104,6 +105,7 @@ sub read_log {
     my $file = shift;
 
     open FILE, "<$file" or die "Couldn't open $file : $!";
+    binmode(FILE);
 
     my @ops = ();
 

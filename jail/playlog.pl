@@ -69,6 +69,7 @@ my $tty_id;
 @ARGV and my $tty_id = $ARGV[0];
 
 open FILE, "<$file" or die "Couldn't open $file : $!";
+binmode(FILE);
 
 my @ops = ();
 
