@@ -44,6 +44,9 @@ sub prepare {
 	$? and die "mkdir '$full' failed : $out";
     }
 
+    my $out = `chmod 755 $full 2>&1`;
+    $? and die "chmod 755 $full failed : $out";
+
     defined($file) and unlink "$full/$file";
     return("$full/$file");
 }
