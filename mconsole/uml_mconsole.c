@@ -1,3 +1,7 @@
+/* Copyright 2001 Jeff Dike and others
+ * Licensed under the GPL
+ */
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
