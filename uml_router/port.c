@@ -179,7 +179,10 @@ static void send_sock(int fd, void *packet, int len, void *data)
   
   err = sendto(mine->fd, packet, len, 0, (struct sockaddr *) &mine->sock,
 	       sizeof(mine->sock));
-  if(err != len) perror("send_sock");
+  if(err != len){
+    fprintf(stderr, "send_sock sending to fd %d ", mine->fd);
+    perror("");
+  }
 }
 
 static int match_sock(int port_fd, int data_fd, void *port_data, 

@@ -74,7 +74,8 @@ int main(int argc, char **argv)
     Usage(name);
 
   if((tap_fd = open(file, O_RDWR)) < 0){
-    perror("opening tun device");
+    fprintf(stderr, "Failed to open '%s' : ", file);
+    perror("");
     exit(1);
   }
 

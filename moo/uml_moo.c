@@ -105,14 +105,14 @@ int create_backing_file(char *in, char *out)
 	int bitmap_len;
 	int sectors;
 	void *sector, *zeros;
-	u64 size, offset, n, i; /* i is u64 to prevent 32 bit overflow */
+	u64 size, offset, i; /* i is u64 to prevent 32 bit overflow */
         union cow_header header;
 	struct cow_header_common common;
 	int data_offset;
         unsigned long magic, version;
         char *backing_file;
         time_t mtime;
-        int sectorsize, bitmap_offset, perms;
+        int sectorsize, bitmap_offset, perms, n;
 
 	if((cow_fd = open(in,  O_RDONLY)) < 0){
 		perror("COW file open");
@@ -240,14 +240,41 @@ int create_backing_file(char *in, char *out)
 			exit(1);
 		}
 
-		/* Sparse file creation - if the sector is all zeros, then
-		 * we don't need to write it out.  Unless it's the last
-		 * sector, in which case it needs to be written in order to
-		 * make the file size right.
+		/* Sparse file creation - if the sector is all zeros and it's
+		 * not the last sector (which always gets written out in order
+		 * to make the file size right), maybe it doesn't need to be
+		 * written out.
 		 */
-		if((i < sectors - 1) && !memcmp(sector, zeros, sectorsize))
-			continue;
 
+		if((i < sectors - 1) && !memcmp(sector, zeros, sectorsize)){
+			/* If we're doing a non-destructive merge, then zero 
+			 * sectors can just be skipped.
+			 */
+			if(out_fd != back_fd)
+				continue;
+
+			/* Otherwise, we are doing a destructive merge, and
+			 * we need to check the backing file for a zero
+			 * sector.
+			 */
+			n = pread(back_fd, sector, sectorsize, i * sectorsize);
+			if(n != sectorsize){
+				perror("Checking backing file for zeros");
+				exit(1);
+			}
+
+			if(!memcmp(sector, zeros, sectorsize))
+				continue;
+
+			/* The backing file sector isn't zeros, so the sector
+			 * of zeros in the COW file needs to be written out.
+			 */
+			memset(sector, 0, sectorsize);
+		}
+
+		/* The offset can't be 'offset' because that's used as an
+		 * input offset, which may be offset by the COW header.
+		 */
 		n = pwrite(out_fd, sector, sectorsize, i * sectorsize);
 		if(n != sectorsize){
 			perror("Writing data");

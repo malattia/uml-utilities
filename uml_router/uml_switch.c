@@ -392,7 +392,7 @@ static void Usage(void)
 
 int main(int argc, char **argv)
 {
-  int connect_fd, data_fd, n, i, new, one = 1;
+  int connect_fd, data_fd, n, i, new, one = 1, daemonize = 0;
   char *tap_dev = NULL;
 #ifdef TUNTAP
   int tap_fd  = -1;
@@ -433,6 +433,11 @@ int main(int argc, char **argv)
       printf("Control protocol 0 compatibility\n");
       compat_v0 = 1;
       data_socket = "/tmp/uml.data";
+      argc--;
+      argv++;
+    }
+    else if(!strcmp(argv[0], "-daemon")){
+      daemonize = 1;
       argc--;
       argv++;
     }
@@ -478,7 +483,8 @@ int main(int argc, char **argv)
 	   data_socket);
   else printf("%s attached to unix socket '%s'\n", prog, ctl_socket);
 
-  if(isatty(0)) add_fd(0);
+  if(isatty(0))
+    add_fd(0);
   add_fd(connect_fd);
   add_fd(data_fd);
 
@@ -486,6 +492,11 @@ int main(int argc, char **argv)
   if(tap_dev != NULL) tap_fd = open_tap(tap_dev);
   if(tap_fd > -1) add_fd(tap_fd);
 #endif
+
+  if (daemonize && daemon(0, 1)) {
+    perror("daemon");
+    exit(1);
+  }
 
   while(1){
     char buf[128];
@@ -503,6 +514,7 @@ int main(int argc, char **argv)
 	  printf("EOF on stdin, cleaning up and exiting\n");
 	  goto out;
 	}
+
 	n = read(0, buf, sizeof(buf));
 	if(n < 0){
 	  perror("Reading from stdin");
