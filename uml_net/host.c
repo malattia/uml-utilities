@@ -120,7 +120,7 @@ int route_and_arp(char *dev, char *addr, char *netmask, int need_route,
   char *arp_argv[] = { "arp", "-Ds", addr, "eth0",  "pub", NULL };
 
   if(!is_a_device(dev)){
-    add_output(output, "Device doesn't contain only alphanumeric characters",
+    add_output(output, "Device doesn't contain only alphanumeric characters\n",
 	       -1);
     return(-1);
   }
@@ -143,7 +143,7 @@ int no_route_and_arp(char *dev, char *addr, char *netmask,
   char *no_arp_argv[] = { "arp", "-i", "eth0", "-d", addr, "pub", NULL };
 
   if(!is_a_device(dev)){
-    add_output(output, "Device doesn't contain only alphanumeric characters",
+    add_output(output, "Device doesn't contain only alphanumeric characters\n",
 	       -1);
     return(-1);
   }

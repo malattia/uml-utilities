@@ -109,7 +109,7 @@ static void ethertap(char *dev, int data_fd, int control_fd, char *gate,
   }
 
   if(!is_a_device(dev)){
-    add_output(o, "Device doesn't contain only alphanumeric characters", -1);
+    add_output(o, "Device doesn't contain only alphanumeric characters\n", -1);
     output_fail(o, control_fd);
   }
   snprintf(dev_file, sizeof(dev_file) - 1, "/dev/%s", dev);
