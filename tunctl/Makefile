@@ -2,8 +2,7 @@ OBJS = tunctl.o
 BIN = tunctl
 CFLAGS = -g -Wall
 
-BIN_DIR = /usr/bin
-LIB_DIR = /usr/lib/uml
+BIN_DIR ?= /usr/bin
 
 all : $(BIN)
 

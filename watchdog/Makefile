@@ -2,8 +2,7 @@ BIN = uml_watchdog
 OBJS = $(BIN).o
 CFLAGS = -g -Wall
 
-BIN_DIR = /usr/bin
-LIB_DIR = /usr/lib/uml
+BIN_DIR ?= /usr/bin
 
 all : $(BIN)
 

@@ -2,8 +2,7 @@ BIN = uml_moo
 OBJS = $(BIN).o
 CFLAGS = -g -Wall -D_FILE_OFFSET_BITS=64
 
-BIN_DIR = /usr/bin
-LIB_DIR = /usr/lib/uml
+BIN_DIR ?= /usr/bin
 
 all : $(BIN)
 

@@ -7,7 +7,6 @@ TARBALL = uml_utilities_$(UMLVER).tar
 BIN_DIR = /usr/bin
 LIB_DIR = /usr/lib/uml
 
-
 export BIN_DIR LIB_DIR
 
 all install: 

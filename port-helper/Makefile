@@ -2,8 +2,7 @@ OBJS = port-helper.o
 BIN = port-helper
 CFLAGS = -g -Wall
 
-BIN_DIR = /usr/bin
-LIB_DIR = /usr/lib/uml
+LIB_DIR ?= /usr/lib/uml
 
 all : $(BIN)
 

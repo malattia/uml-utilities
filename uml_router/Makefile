@@ -4,8 +4,7 @@ OBJS = hash.o port.o uml_switch.o
 BIN = uml_switch
 CFLAGS = -g -Wall $(TUNTAP)
 
-BIN_DIR = /usr/bin
-LIB_DIR = /usr/lib/uml
+BIN_DIR ?= /usr/bin
 
 ifneq ($(TUNTAP),)
 	OBJS += tuntap.o
