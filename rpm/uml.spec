@@ -99,6 +99,8 @@ if [ "$RPM_BUILD_ROOT" = "/tmp/uml-kit" ]; then
     install $RPM_BUILD_ROOT/modules.tar.gz $RPM_BUILD_ROOT/usr/lib/uml
 
     install $CVS_POOL/tools/redhat/mkrootfs $RPM_BUILD_ROOT/usr/bin/mkrootfs
+    install $CVS_POOL/tools/redhat/functions \
+	$RPM_BUILD_ROOT/var/lib/uml/functions
     install $CVS_POOL/tools/uml_net/uml_net $RPM_BUILD_ROOT/usr/bin/uml_net
     install $CVS_POOL/tools/uml_router/uml_router \
 	$RPM_BUILD_ROOT/usr/bin/uml_router
@@ -126,6 +128,7 @@ fi
 %attr(755,root,root)				/usr/bin/linux
 %attr(644,root,root)                            /usr/lib/uml/modules.tar.gz
 %attr(755,root,root)				/usr/bin/mkrootfs
+%attr(755,root,root)				/var/lib/uml/functions
 %attr(4755,root,root)				/usr/bin/uml_net
 %attr(755,root,root)				/usr/bin/uml_router
 %attr(644,root,root)                            /usr/doc/HOWTO/UserModeLinux-HOWTO
