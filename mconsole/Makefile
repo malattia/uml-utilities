@@ -5,10 +5,11 @@ CFLAGS = -g -Wall
 all : $(BIN)
 
 $(BIN) : $(OBJS)
-	$(CC) $(CFLAGS) -o $(BIN) $(OBJS) -lreadline
+	$(CC) $(CFLAGS) -o $(BIN) $(OBJS) -lreadline -lncurses
 
 clean : 
 	rm -f $(BIN) $(OBJS) *~
 
 install :
-	install $(BIN) $(DESTDIR)/usr/bin
+	install -d $(DESTDIR)/usr/bin
+	install -s $(BIN) $(DESTDIR)/usr/bin

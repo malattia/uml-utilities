@@ -32,7 +32,7 @@ int main(int argc, char **argv)
   here.sun_family = AF_UNIX;
   memset(here.sun_path, 0, sizeof(here.sun_path));
   sprintf(&here.sun_path[1], "%5d", getpid());
-  if(bind(fd, &here, sizeof(here)) < 0){
+  if(bind(fd, (struct sockaddr *) &here, sizeof(here)) < 0){
     perror("bind");
     exit(1);
   }
