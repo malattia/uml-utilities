@@ -41,20 +41,21 @@ int do_exec(char **args, int need_zero, struct output *output)
     exit(1);
   }
   else if(pid < 0){
-    perror("fork failed");
+    output_errno(output, "fork failed");
     return(-1);
   }
   if(output){
     close(fds[1]);
     while((n = read(fds[0], buf, sizeof(buf))) > 0) add_output(output, buf, n);
-    if(n < 0) perror("Reading command output");
+    if(n < 0) output_errno(output, "Reading command output");
   }
   if(waitpid(pid, &status, 0) < 0){
-    perror("execvp");
+    output_errno(output, "waitpid");
     return(-1);
   }
   if(need_zero && (!WIFEXITED(status) || (WEXITSTATUS(status) != 0))){
-    printf("'%s' didn't exit with status 0\n", args[0]);
+    sprintf(buf, "'%s' didn't exit with status 0\n", args[0]);
+    add_output(output, buf, -1);
     return(-1);
   }
   return(0);
@@ -242,7 +243,7 @@ void change_addr(char *op, char *dev, char *address, char *netmask,
 		 struct output *output)
 {
   if(setreuid(0, 0) < 0){
-    perror("setreuid");
+    output_errno(output, "setreuid");
     exit(1);
   }
   if(!strcmp(op, "add")) route_and_arp(dev, address, netmask, 0, output);

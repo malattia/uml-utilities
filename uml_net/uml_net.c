@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
 
 #define CURRENT_VERSION (4)
 
@@ -71,13 +72,30 @@ void (*del_handlers[])(int argc, char **argv) = {
   del_address_v4,
 };
 
+static void handler(int sig)
+{
+}
+
 int main(int argc, char **argv)
 {
   char *version = argv[1];
   char *transport = argv[2];
   void (**handlers)(int, char **);
+  struct sigaction sa;
   char *out;
   int n = 3, v;
+
+  if(sigaction(SIGCHLD, NULL, &sa) < 0){
+    perror("sigaction");
+    exit(1);
+  }
+  sa.sa_handler = handler;
+  sa.sa_flags &= ~SA_NOCLDWAIT;
+  sa.sa_flags |= SA_RESTART;
+  if(sigaction(SIGCHLD, &sa, NULL) < 0){
+    perror("sigaction");
+    exit(1);
+  }
 
   if(argc < 3){
     fprintf(stderr, 

@@ -88,7 +88,6 @@ static void ethertap(char *dev, int data_fd, int control_fd, char *gate,
   int tap, minor;
 
   if(collect_output) o = &output;
-  signal(SIGHUP, SIG_IGN);
   if(setreuid(0, 0) < 0){
     output_errno(o, "setreuid");
     output_fail(o, control_fd);

@@ -63,6 +63,7 @@ void output_errno(struct output *output, char *str)
   if(output == NULL) perror(str);
   else {
     add_output(output, str, -1);
+    add_output(output, ": ", -1);
     add_output(output, strerror(errno), -1);
     add_output(output, "\n", -1);
   }

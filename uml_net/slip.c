@@ -1,4 +1,4 @@
-/* Copyright 2001 Jeff Dike and others
+/* Copyright 2001, 2002 Jeff Dike and others
  * Licensed under the GPL
  */
 
@@ -91,7 +91,7 @@ void slip_v3(int argc, char **argv)
   char *op = argv[0], dev[sizeof("slnnnnn\0")];
 
   if(setreuid(0, 0) < 0){
-    perror("slip - setreuid failed");
+    output_errno(&output, "slip - setreuid failed");
     exit(1);
   }
 
@@ -111,15 +111,29 @@ void slip_v3(int argc, char **argv)
 void slip_v4(int argc, char **argv)
 {
   struct output output = INIT_OUTPUT;
-  char *op = argv[0];
+  char *op;
 
   if(setreuid(0, 0) < 0){
-    perror("slip - setreuid failed");
+    output_errno(&output, "slip - setreuid failed");
     exit(1);
   }
 
-  if(!strcmp(op, "up")) 
-    slip_up(0, argv[1], argv[2], NULL, &output);
+  if(argc < 1){
+    add_output(&output, "uml_net : too few arguments to slip_v4\n", -1);
+    write_output(1, &output);
+    exit(1);
+  }
+
+  op = argv[0];
+  if(argc < 2){
+      add_output(&output, "uml_net : too few arguments to slip_v4\n", -1);
+      write_output(1, &output);
+      exit(1);
+  }
+    
+  if(!strcmp(op, "up")){
+    slip_up(0, argv[1], NULL, NULL, &output);
+  }
   else if(!strcmp(op, "down")){
     slip_down(argv[1], NULL, NULL, &output);
   }
