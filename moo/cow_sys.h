@@ -38,7 +38,12 @@ static inline char *cow_strdup(char *str)
 
 static inline int cow_seek_file(int fd, __u64 offset)
 {
-	return(lseek(fd, offset, SEEK_SET));
+	__u64 actual;
+
+	actual = lseek(fd, offset, SEEK_SET);
+	if(actual != offset)
+		return(-errno);
+	return(0);
 }
 
 static inline int cow_file_size(char *file, long long *size_out)
