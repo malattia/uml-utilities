@@ -49,7 +49,7 @@ main(int argc, char **argv)
 			    "mtu", "1484", NULL };
   char *route_argv[] = { "route", "add", "-host", remote_addr, "gw", 
 			 gate_addr, NULL };
-  char *arp_argv[] = { "arp", "-Ds", gate_addr, "eth0", "pub", NULL };
+  char *arp_argv[] = { "arp", "-Ds", remote_addr, "eth0", "pub", NULL };
   char *forw_argv[] = { "bash",  "-c", 
 			"echo 1 > /proc/sys/net/ipv4/ip_forward", NULL };
   char dev_file[sizeof("/dev/tapxxxx\0")], c;
