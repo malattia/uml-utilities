@@ -112,6 +112,8 @@ if($tty_log == 1){
     push @more_args, "tty_log_fd=3"
 }
 
+push @more_args, "uml_dir=/tmp";
+
 print "New inmate assigned to '$cell'\n";
 print "	UML image : $uml\n";
 print "	Root filesystem : $rootfs\n";
