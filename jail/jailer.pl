@@ -87,7 +87,7 @@ if(defined($host_ip)){
 }
 
 if($tty_log == 1){
-    push @more_args, "3>tty_log_$cell", "tty_log_fd=3"
+    push @more_args, "tty_log_fd=3"
 }
 
 print "New inmate assigned to '$cell'\n";
@@ -101,27 +101,37 @@ else {
 }
 if($tty_log == 1){
     print "	TTY logging to tty_log_$cell\n";
+    push @more_args, "3>tty_log_$cell";
 }
 print "	Extra arguments : '" . join(" ", @uml_args) . "'\n";
 print "\n";
 
-$out = `mkdir $cell 2>&1`;
-$? ne 0 and die "Couldn't mkdir $cell : '$out'";
+sub run {
+    my $cmd = shift;
+    my $out = `$cmd 2>&1`;
+
+    $? ne 0 and die "Running '$cmd' failed : output = '$out'";
+}
+
+run("mkdir $cell");
+run("chmod 755 $cell");
 
 my $cell_tar = "cell.tar";
-$out = `cd $cell ; $sudo tar xpf ../$cell_tar 2>&1`;
-$? ne 0 and die "Couldn't populate $cell : '$out'";
+run("cd $cell ; $sudo tar xpf ../$cell_tar");
 
-$out = `$sudo chown $uid $cell/tmp 2>&1`;
-$? ne 0 and die "chown of /tmp failed : '$out'";
-
-$out = `$sudo chmod 777 $cell/tmp 2>&1`;
-$? ne 0 and die "chmod of /tmp failed : '$out'";
+run("$sudo chown $uid $cell/tmp");
+run("$sudo chmod 777 $cell/tmp");
 
 print "Copying '$uml' and '$rootfs' to '$cell'...";
-$out = `cp $uml $rootfs $cell 2>&1`;
-$? ne 0 and die "Couldn't copy kernel and filesystem into $cell : '$out'";
+run("cp $uml $rootfs $cell");
 print "done\n\n";
+
+if(-e "/proc/mm"){
+    run("mkdir $cell/proc");
+    run("chmod 755 $cell/proc");
+    run("touch $cell/proc/mm");
+    run("$sudo mount --bind /proc/mm $cell/proc/mm");
+}
 
 $uml = `basename $uml`;
 chomp $uml;
@@ -129,24 +139,22 @@ chomp $uml;
 $rootfs = `basename $rootfs`;
 chomp $rootfs;
 
-$out = `$sudo chmod 666 $cell/$rootfs 2>&1`;
-$? ne 0 and die "chmod of $cell/$rootfs failed : '$out'";
+run("$sudo chmod 666 $cell/$rootfs");
+run("$sudo chmod 755 $cell/$uml");
 
-my @args = ("./jail_uml", $cell, $uid, "sh", "-c", "/$uml", "ubd0=/$rootfs", 
-	    @uml_args, @more_args );
+my @args = ( "bash", "-c", "./jail_uml $cell $uid /$uml ubd0=/$rootfs " . 
+	     join(" ", @uml_args, @more_args) );
+
 $sudo ne "" and unshift @args, $sudo;
 
 system @args;
 
-$out = `rm -rf $cell 2>&1`;
-$? ne 0 and die "Failed to clean up cell after inmate's demise : '$out'";
+-e "$cell/proc/mm" and run("$sudo umount $cell/proc/mm");
+run("rm -rf $cell");
 
 if(defined($tap)){
-    $out = `$sudo ifconfig $tap down 2>&1`;
-    $? ne 0 and die "Failed to down $tap - status = $? : '$out'";
-
-    $out = `$sudo tunctl -d $tap`;
-    $? ne 0 and die "Failed to make $tap non-persistent : '$out'";
+    run("$sudo ifconfig $tap down");
+    run("$sudo tunctl -d $tap");
 }
 
 exit 0;
