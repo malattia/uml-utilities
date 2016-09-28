@@ -1,0 +1,13 @@
+*.o
+*.a
+jail/jail_uml
+jailtest/jailtest
+mconsole/uml_mconsole
+moo/uml_mkcow
+moo/uml_moo
+port-helper/port-helper
+tunctl/tunctl
+uml_net/uml_net
+uml_switch/uml_switch
+umlfs/uml_mount
+watchdog/uml_watchdog
