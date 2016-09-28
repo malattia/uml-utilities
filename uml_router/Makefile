@@ -2,7 +2,7 @@ TUNTAP = $(shell [ -e /usr/include/linux/if_tun.h ] && echo -DTUNTAP)
 
 OBJS = hash.o port.o uml_switch.o 
 BIN = uml_switch
-CFLAGS = -g -Wall $(TUNTAP)
+CFLAGS ?= -g -Wall $(TUNTAP)
 
 BIN_DIR ?= /usr/bin
 

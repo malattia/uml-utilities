@@ -1,6 +1,7 @@
 CC = gcc
 
-CFLAGS = -Wall -ggdb
+CFLAGS ?= -g -Wall
+override CFLAGS += -ggdb
 
 all: um_eth_serv um_eth_tool
 

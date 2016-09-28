@@ -13,7 +13,6 @@ LIB_DIR = /usr/lib/uml
 endif
 
 CFLAGS = -g -Wall
-#CFLAGS = -g -O2 -Wall
 
 export BIN_DIR LIB_DIR CFLAGS
 
