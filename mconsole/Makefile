@@ -1,7 +1,7 @@
 BIN = uml_mconsole
 OBJS = $(BIN).o
 CFLAGS ?= -g -Wall
-LIBS = ../lib/libuml.a -lreadline -lncurses
+LIBS = ../lib/libuml.a -lreadline
 
 BIN_DIR ?= /usr/bin
 
