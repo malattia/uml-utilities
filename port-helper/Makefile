@@ -1,13 +1,14 @@
 OBJS = port-helper.o
 BIN = port-helper
-CFLAGS = -g -Wall
+CFLAGS ?= -g -Wall
+LIBS = ../lib/libuml.a
 
 LIB_DIR ?= /usr/lib/uml
 
 all : $(BIN)
 
 $(BIN) : $(OBJS)
-	$(CC) $(CFLAGS) -o $(BIN) $(OBJS)
+	$(CC) $(CFLAGS) -o $(BIN) $(OBJS) $(LIBS)
 
 clean : 
 	rm -f $(BIN) $(OBJS) *~

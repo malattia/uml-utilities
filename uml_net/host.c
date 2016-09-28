@@ -104,7 +104,7 @@ static void local_net_do(char **argv, int if_index, char *addr_str,
 
 int is_a_device(char *dev)
 {
-  int i;
+  unsigned i;
 
   for(i = 0; i < strlen(dev); i++){
     if(!isalnum(dev[i])) return(0);

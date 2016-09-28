@@ -3,7 +3,8 @@ BIN = uml_moo uml_mkcow
 uml_moo_OBJS = uml_moo.o cow.o
 uml_mkcow_OBJS = uml_mkcow.o cow.o
 
-CFLAGS = -g -Wall -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE
+CFLAGS ?= -g -Wall
+override CFLAGS += -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -D_GNU_SOURCE
 
 BIN_DIR ?= /usr/bin
 

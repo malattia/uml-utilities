@@ -1,6 +1,6 @@
 OBJS = tunctl.o
 BIN = tunctl
-CFLAGS = -g -Wall
+CFLAGS ?= -g -Wall
 
 BIN_DIR ?= /usr/bin
 

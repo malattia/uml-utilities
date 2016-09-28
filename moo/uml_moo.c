@@ -1,7 +1,7 @@
 /* Copyrighted (C) 2001 RidgeRun,Inc (glonnon@ridgerun.com)
  * With modifications by Jeff Dike, James McMechan, and Steve Schmidtke.
  * Licensed under the GPL
- */ 
+ */
 
 #define _XOPEN_SOURCE 500
 
@@ -18,24 +18,30 @@
 #include <sys/param.h>
 #include "cow.h"
 
-static inline int ubd_test_bit(int bit, unsigned long *data)
+static inline int ubd_test_bit(__u64 bit, unsigned long *data)
 {
-	int bits, n, off;
+	int bits, off;
+	__u64 n;
 
 	bits = sizeof(data[0]) * 8;
 	n = bit / bits;
 	off = bit % bits;
-	return((data[n] & (1 << off)) != 0);
+	//1UL to prevent sign-extension, which turns 0x8000000 into
+	//0xffffffff8000000
+	return((data[n] & (1UL << off)) != 0);
 }
 
-static inline void ubd_set_bit(int bit, unsigned long *data)
+static inline void ubd_set_bit(__u64 bit, unsigned long *data)
 {
-	int bits, n, off;
+	int bits, off;
+	__u64 n;
 
 	bits = sizeof(data[0]) * 8;
 	n = bit / bits;
 	off = bit % bits;
-	data[n] |= (1 << off);
+	//1UL to prevent sign-extension, which turns 0x8000000 into
+	//0xffffffff8000000
+	data[n] |= (1UL << off);
 }
 
 int create_backing_file(char *in, char *out, char *actual_backing)
@@ -44,21 +50,21 @@ int create_backing_file(char *in, char *out, char *actual_backing)
 	struct stat buf;
 	unsigned long *bitmap;
 	unsigned long bitmap_len;
-	int sectors;
+	unsigned sectorsize, sectors;
 	void *sector, *zeros;
 	__u64 size, offset, i; /* i is u64 to prevent 32 bit overflow */
 	__u32 version, alignment;
 	int data_offset;
         char *backing_file;
         time_t mtime;
-        int sectorsize, bitmap_offset, perms, n;
+        int bitmap_offset, perms, n;
 
 	if((cow_fd = open(in,  O_RDONLY)) < 0){
 		perror("COW file open");
 		exit(1);
 	}
 
-	if(read_cow_header(file_reader, &cow_fd, &version, &backing_file, 
+	if(read_cow_header(file_reader, &cow_fd, &version, &backing_file,
 			   &mtime, &size, &sectorsize, &alignment,
 			   &bitmap_offset)){
 		fprintf(stderr, "Reading COW header failed\n");
@@ -75,7 +81,7 @@ int create_backing_file(char *in, char *out, char *actual_backing)
 
 	if(buf.st_size != size){
 		fprintf(stderr,"Size mismatch (%ld vs %ld) of COW header "
-			"vs backing file \"%s\"\n", (long int) size, 
+			"vs backing file \"%s\"\n", (long int) size,
 			(long int) buf.st_size, backing_file);
 		exit(1);
 	}
@@ -101,7 +107,7 @@ int create_backing_file(char *in, char *out, char *actual_backing)
 	}
 	else out_fd = back_fd;
 
-	cow_sizes(version, size, sectorsize, alignment, bitmap_offset, 
+	cow_sizes(version, size, sectorsize, alignment, bitmap_offset,
 		  &bitmap_len, &data_offset);
 		
 	bitmap = (unsigned long *) malloc(bitmap_len);
@@ -151,7 +157,7 @@ int create_backing_file(char *in, char *out, char *actual_backing)
 		 */
 
 		if((i < sectors - 1) && !memcmp(sector, zeros, sectorsize)){
-			/* If we're doing a non-destructive merge, then zero 
+			/* If we're doing a non-destructive merge, then zero
 			 * sectors can just be skipped.
 			 */
 			if(out_fd != back_fd)
@@ -194,7 +200,7 @@ int create_backing_file(char *in, char *out, char *actual_backing)
 	return(0);
 }
 
-static char *usage_string = 
+static char *usage_string =
 "%s usage:\n"
 "\t%s [ -b <actual backing file> ] <COW file> <new backing file>\n"
 "\t%s [ -b <actual backing file> ] -d <COW file>\n"
@@ -203,14 +209,14 @@ static char *usage_string =
 "its current backing file\n"
 "Specifying -b overrides the backing_file specified in the COW file.  This is\n"
 "needed when dealing with a COW file that was created inside a chroot jail.\n"
-"%s supports version 1 and 2 COW files.\n"
+"%s supports version 1,2 and 3 COW files.\n"
 "";
 
 static int Usage(char *prog) {
 	fprintf(stderr, usage_string, prog, prog, prog, prog);
 	exit(1);
 }
-    
+
 int main(int argc, char **argv)
 {
 	char *prog = argv[0];

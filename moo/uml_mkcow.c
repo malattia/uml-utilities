@@ -3,6 +3,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -19,6 +20,7 @@ void usage(const char progname[])
 int main(int argc, char *argv[]) 
 {
   int fd; 
+  int err;
   char *cow_file;
   char *backing_file;
   int bitmap_offset_out;
@@ -57,8 +59,9 @@ int main(int argc, char *argv[])
 	exit(1);
   }
   
-  if(init_cow_file(fd, cow_file, backing_file, 512, sysconf(_SC_PAGESIZE), 
-		   &bitmap_offset_out, &bitmap_len_out, &data_offset_out)){
+  if((err = init_cow_file(fd, cow_file, backing_file, 512, sysconf(_SC_PAGESIZE),
+		   &bitmap_offset_out, &bitmap_len_out, &data_offset_out))){
+	errno = -err;
 	perror("write_cow_header");
 	exit(1);
   }
@@ -66,5 +69,5 @@ int main(int argc, char *argv[])
   return (0);
 }
 
-/* vim: ts=4 tw=74 
+/* vim: ts=4 tw=74 sw=2
  */

@@ -111,7 +111,7 @@ void slip_v3(int argc, char **argv)
 void slip_v4(int argc, char **argv)
 {
   struct output output = INIT_OUTPUT;
-  char *op;
+  char *op, dev[sizeof("slnnnnn\0")];
 
   if(setreuid(0, 0) < 0){
     output_errno(&output, "slip - setreuid failed");
@@ -135,7 +135,14 @@ void slip_v4(int argc, char **argv)
     slip_up(0, argv[1], NULL, NULL, &output);
   }
   else if(!strcmp(op, "down")){
-    slip_down(argv[1], NULL, NULL, &output);
+    /* We now pass the interface to the "down" command as an open FD, rather
+     * than as a name, because the latter allowed anybody to use uml_net to down
+     * a interface he didn't own.
+     *
+     * Instead, as Steve Schmidtke said, an open FD is a proof that you own the
+     * interface, so this way we should be safe. */
+    slip_name(0, dev, &output);
+    slip_down(dev, NULL, NULL, &output);
   }
   else {
     printf("slip - Unknown op '%s'\n", op);

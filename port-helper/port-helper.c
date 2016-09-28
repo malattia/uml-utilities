@@ -20,48 +20,8 @@ for read and write, and the console is functional.
 #include <sys/un.h>
 #include <sys/uio.h>
 
-/* pass the fd over an fd that is already connected to a socket */
-static void send_fd(int fd, int target)
-{
-
-  /* File descriptors are specific to a process and normally only
-     sharable with another process by inheritence with fork(). The 
-     alternative is to use sendmsg with a special flag that says 
-     "I'm knowingly giving another process information from my private 
-     file descriptor table" (SCM_RIGHTS) 
-  */
-
-  char anc[CMSG_SPACE(sizeof(fd))];
-  struct msghdr msg;
-  struct cmsghdr *cmsg;
-  struct iovec iov;
-  int *fd_ptr, pid = getpid();
-
-  msg.msg_name = NULL;
-  msg.msg_namelen = 0;
-  iov = ((struct iovec) { iov_base : &pid,
-			  iov_len :  sizeof(pid) });
-  msg.msg_iov = &iov;
-  msg.msg_iovlen = 1;
-  msg.msg_flags = 0;
-  msg.msg_control = anc;
-  msg.msg_controllen = sizeof(anc);
-
-  cmsg = CMSG_FIRSTHDR(&msg);
-  cmsg->cmsg_level = SOL_SOCKET;
-  cmsg->cmsg_type = SCM_RIGHTS;
-  cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
-
-  fd_ptr = (int *) CMSG_DATA(cmsg);
-  *fd_ptr = fd;
-
-  msg.msg_controllen = cmsg->cmsg_len;
-
-  if(sendmsg(target, &msg, 0) < 0){
-    perror("sendmsg");
-    exit(1);
-  }
-}
+extern void send_fd(int fd, int target, struct sockaddr *to, int to_len, 
+		    void *msg, int msg_len);
 
 /* for xterm we don't have an open socket, we only have the name
  of a file used as a Unix socket by UML. So we need to open it. */
@@ -95,7 +55,7 @@ static int open_socket(char *name)
 
 int main(int argc, char **argv)
 {
-  int fd;
+  int fd, pid;
 
   if((argc > 1) && !strcmp(argv[1], "-uml-socket")) {
 	/* inherited a filename not an open fd */
@@ -108,7 +68,8 @@ int main(int argc, char **argv)
   signal(SIGHUP, SIG_IGN);
   if(ioctl(0, TIOCNOTTY, 0) < 0)
     perror("TIOCNOTTY failed in port-helper, check UML's exec call for xterm or telnetd");
-  send_fd(0, fd);
+  pid = getpid();
+  send_fd(0, fd, NULL, 0, &pid, sizeof(pid));
   pause();
   return(0);
 }

@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -40,44 +41,76 @@
 
 static char uml_name[11];
 static struct sockaddr_un sun;
+static long uml_pid;
 
-static int do_switch(char *file, char *name)
+static int do_switch(char *dir, char *file, char *name)
 {
-  struct stat buf;
+	struct stat buf;
+	char pid_path[MAXPATHLEN + 1];
+	FILE *fp;
+	char pid[sizeof("12345\0")], *end;
+	int n, x = -1;
 
-  if(stat(file, &buf) == -1){
-    fprintf(stderr, "Warning: couldn't stat file: %s - ", file);
-    perror("");
-    return(1);
-  }
-  sun.sun_family = AF_UNIX;
-  strncpy(sun.sun_path, file, sizeof(sun.sun_path));
-  strncpy(uml_name, name, sizeof(uml_name));
-  return(0);
+	if(stat(file, &buf) == -1){
+		fprintf(stderr, "Warning: couldn't stat file: %s - ", file);
+		perror("");
+		return 1;
+	}
+	sun.sun_family = AF_UNIX;
+	strncpy(sun.sun_path, file, sizeof(sun.sun_path));
+	strncpy(uml_name, name, sizeof(uml_name));
+
+	/* Open and read PID file */
+	uml_pid = -1;
+
+	snprintf(pid_path, sizeof(pid_path), "%s/%s/pid", dir, name);
+	fp = fopen(pid_path, "r");
+	if(fp == NULL)
+		return 0;
+
+	while (!feof(fp) && !ferror(fp))
+		fread(&pid[++x], sizeof(char), 1, fp);
+
+	/* Convert read PID to number, or set PID to known error number */
+	if (feof(fp) && !ferror(fp)){
+		n = strtol(pid, &end, 10);
+		if(end != pid)
+			uml_pid = n;
+	}
+
+	return 0;
 }
 
 static int switch_common(char *name)
 {
-  char file[MAXPATHLEN + 1], dir[MAXPATHLEN + 1], tmp[MAXPATHLEN + 1], *home;
-  int try_file = 1;
+	char file[MAXPATHLEN + 1], dir[MAXPATHLEN + 1], tmp[MAXPATHLEN + 1];
+	char *home;
+	int try_file = 1;
 
-  if((home = getenv("HOME")) != NULL){
-    snprintf(dir, sizeof(dir), "%s/.uml", home);
-    snprintf(file, sizeof(file), "%s/%s/mconsole", dir, name);
-    if(strncmp(name, dir, strlen(dir))){
-      if(!do_switch(file, name)) return(0);
-      try_file = 0;
-    }
-  }
+	if((home = getenv("HOME")) != NULL){
+		snprintf(dir, sizeof(dir), "%s/.uml", home);
+		snprintf(file, sizeof(file), "%s/%s/mconsole", dir, name);
+		if(strncmp(name, dir, strlen(dir))){
+			if(!do_switch(dir, file, name)) return(0);
+			try_file = 0;
+		}
+	}
 
-  snprintf(tmp, sizeof(tmp), "/tmp/uml/%s/mconsole", name);
-  if(strncmp(name, "/tmp/uml/", strlen("/tmp/uml/"))){
-    if(!do_switch(tmp, name)) return(0);
-  }
+	snprintf(dir, sizeof(dir), "/tmp/uml/%s", name);
+	snprintf(tmp, sizeof(tmp), "/tmp/uml/%s/mconsole", name);
+	if(strncmp(name, "/tmp/uml/", strlen("/tmp/uml/"))){
+		if(!do_switch(dir, tmp, name))
+			return 0;
+	}
 
-  if(!do_switch(name, name)) return(0);
-  if(!try_file) return(-1);
-  return(do_switch(file, name));
+	snprintf(dir, sizeof(dir), "./");
+	if(!do_switch(dir, name, name)) 
+		return 0;
+
+	if(!try_file) 
+		return -1;
+
+	return do_switch(dir, file, name);
 }
 
 #define MCONSOLE_MAGIC (0xcafebabe)
@@ -98,10 +131,10 @@ struct mconsole_reply {
 	char data[MCONSOLE_MAX_DATA];
 };
 
-static char *absolutize(char *to, int size, char *from)
+static char *absolutize(char *to, size_t size, char *from)
 {
   char save_cwd[MAXPATHLEN + 1], *slash;
-  int remaining;
+  size_t remaining;
 
   if(getcwd(save_cwd, sizeof(save_cwd)) == NULL) {
     perror("absolutize : unable to get cwd");
@@ -124,7 +157,7 @@ static char *absolutize(char *to, int size, char *from)
     }
     remaining = size - strlen(to);
     if(strlen(slash) + 1 > remaining){
-      fprintf(stderr, "absolutize : unable to fit '%s' into %d chars\n", from,
+      fprintf(stderr, "absolutize : unable to fit '%s' into %zd chars\n", from,
 	      size);
       return(NULL);
     }
@@ -132,7 +165,7 @@ static char *absolutize(char *to, int size, char *from)
   }
   else {
     if(strlen(save_cwd) + 1 + strlen(from) + 1 > size){
-      fprintf(stderr, "absolutize : unable to fit '%s' into %d chars\n", from,
+      fprintf(stderr, "absolutize : unable to fit '%s' into %zd chars\n", from,
 	      size);
       return(NULL);
     }
@@ -204,59 +237,87 @@ static int fix_filenames(char **cmd_ptr)
   return(1);
 }
 
+static int rcv_output(int fd, char **output)
+{
+	struct mconsole_reply reply;
+	int n, err = 0, first = 1, len = 0;
+
+	do {
+		n = recvfrom(fd, &reply, sizeof(reply), 0, NULL, 0);
+		if(n < 0){
+			perror("recvmsg");
+			return(1);
+		}
+
+		err = reply.err ? 1 : err;
+
+		*output = realloc(*output, len + strlen(reply.data) + 1);
+		if(*output == NULL){
+			perror("realloc failed");
+			return 1;
+		}
+
+		if(first)
+			**output = '\0';
+		strcat(*output, reply.data);
+		len += strlen(reply.data);
+		first = 0;
+	} while(reply.more);
+
+	return reply.err;
+}
+
+static void format_cmd(char *command, struct mconsole_request *request)
+{
+	*request = ((struct mconsole_request) 
+		{ .magic	= MCONSOLE_MAGIC,
+		  .version	= MCONSOLE_VERSION,
+		  .len		= MIN(strlen(command), 
+				      sizeof(request->data) - 1) });
+	strncpy(request->data, command, request->len);
+	request->data[request->len] = '\0';
+}
+
+static int send_cmd(int fd, char *command, char **output)
+{
+	struct mconsole_request request;
+
+	format_cmd(command, &request);
+	if(sendto(fd, &request, sizeof(request), 0, (struct sockaddr *) &sun, 
+		  sizeof(sun)) < 0){
+		fprintf(stderr, "Sending command to '%s' : ", sun.sun_path);
+		perror("");
+		return 1;
+	}
+
+	return rcv_output(fd, output);
+}
+
 static int default_cmd(int fd, char *command)
 {
-  struct mconsole_request request;
-  struct mconsole_reply reply;
-  char name[128];
-  int n, free_command, first;
+	char name[128], *output = NULL;
+	int free_command, err;
 
-  if((sscanf(command, "%128[^: \f\n\r\t\v]:", name) == 1) &&
-     (*(name + 1) == ':')){
-    if(switch_common(name)) 
-      return(1);
-    command = strchr(command, ':');
-    *command++ = '\0';
-    while(isspace(*command)) command++;
-  }
+	if((sscanf(command, "%128[^: \f\n\r\t\v]:", name) == 1) &&
+	   (*(name + 1) == ':')){
+		if(switch_common(name)) 
+			return(1);
+		command = strchr(command, ':');
+		*command++ = '\0';
+		while(isspace(*command)) command++;
+	}
 
-  free_command = fix_filenames(&command);
+	free_command = fix_filenames(&command);
 
-  request.magic = MCONSOLE_MAGIC;
-  request.version = MCONSOLE_VERSION;
-  request.len = MIN(strlen(command), sizeof(reply.data) - 1);
-  strncpy(request.data, command, request.len);
-  request.data[request.len] = '\0';
+	err = send_cmd(fd, command, &output);
+	if(output != NULL){
+		printf("%s %s\n", err ? "ERR" : "OK", output);
+		free(output);
+	}
 
-  if(free_command) free(command);
+	if(free_command) free(command);
 
-  if(sendto(fd, &request, sizeof(request), 0, (struct sockaddr *) &sun, 
-	    sizeof(sun)) < 0){
-    fprintf(stderr, "Sending command to '%s' : ", sun.sun_path);
-    perror("");
-    return(1);
-  }
-
-  first = 1;
-  do {
-    n = recvfrom(fd, &reply, sizeof(reply), 0, NULL, 0);
-    if(n < 0){
-      perror("recvmsg");
-      return(1);
-    }
-
-    if(first){
-      if(reply.err) printf("ERR ");
-      else printf("OK ");
-
-      first = 0;
-    }
-
-    printf("%s", reply.data);
-  } while(reply.more);
-
-  printf("\n");
-  return(reply.err);
+	return err;
 }
 
 char *local_help = 
@@ -264,7 +325,8 @@ char *local_help =
     quit - Quit mconsole\n\
     switch <socket-name> - Switch control to the given machine\n\
     log -f <filename> - use contents of <filename> as UML log messages\n\
-    mconsole-version - version of this mconsole program\n";
+    mconsole-version - version of this mconsole program\n\
+    int  - Interrupt UML session\n";
 
 static int help_cmd(int fd, char *command)
 {
@@ -333,6 +395,40 @@ static int log_cmd(int fd, char *command)
   return(0);
 }
 
+extern int send_fd(int fd, int target, struct sockaddr *to, int to_len,
+		   void *msg, int msg_len);
+
+static int umlfs_cmd(int fd, char *command)
+{
+	struct mconsole_request request;
+	char *end, *output, *fd_ptr;
+	int fuse_fd, err;
+
+	fd_ptr = command;
+	fd_ptr += strlen("umlfs");
+	while(isspace(*fd_ptr)) fd_ptr++;
+
+	fuse_fd = strtoul(fd_ptr, &end, 0);
+	if(*end != '\0'){
+		output = "Failed to parse file descriptor";
+		err = -EINVAL;
+		goto out;
+	}
+
+	format_cmd(command, &request);
+	err = send_fd(fuse_fd, fd, (struct sockaddr *) &sun, sizeof(sun), 
+		      &request, sizeof(request));
+	if(err){
+		output = "Failed to send FUSE file descriptor";
+		goto out;
+	}
+
+	err = rcv_output(fd, &output);
+out:
+	printf("%s %s\n", err ? "ERR" : "OK", output);
+	return err;
+}
+
 static int quit_cmd(int fd, char *command)
 {
   exit(0);
@@ -344,26 +440,42 @@ static int mversion_cmd(int fd, char *command)
   return(0);
 }
 
+static int int_cmd(int fd, char *command)
+{
+
+	if(uml_pid == -1){
+		printf("Cannot determine the PID of your UML session, not "
+		       "sending signal.\n");
+		return 0;
+	}
+
+	kill(uml_pid, SIGINT);
+
+	return 0;
+}
+
 struct cmd {
   char *command;
   int (*proc)(int, char *);
 };
 
 static struct cmd cmds[] = {
-  { "quit", quit_cmd },
-  { "help", help_cmd },
-  { "switch", switch_cmd },
-  { "log", log_cmd },
-  { "mconsole-version", mversion_cmd },
-  { NULL, default_cmd }
-  /* default_cmd means "send it to the UML" */
+	{ "quit", quit_cmd },
+	{ "help", help_cmd },
+	{ "switch", switch_cmd },
+	{ "log", log_cmd },
+	{ "umlfs", umlfs_cmd },
+	{ "mconsole-version", mversion_cmd },
+	{ "int", int_cmd },
+	{ NULL, default_cmd }
+	/* default_cmd means "send it to the UML" */
 };
 
 /* sends a command */
 int issue_command(int fd, char *command)
 {
   char *ptr;
-  int i = 0;
+  unsigned int i = 0;
 
   /* Trim trailing spaces left by readline's filename completion */
   ptr = &command[strlen(command) - 1];

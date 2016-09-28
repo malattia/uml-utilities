@@ -1,7 +1,8 @@
 TUNTAP = $(shell [ -e /usr/include/linux/if_tun.h ] && echo -DTUNTAP)
 
 BIN = uml_net
-CFLAGS = -g -Wall $(TUNTAP)
+CFLAGS ?= -g -Wall
+override CFLAGS += $(TUNTAP)
 
 BIN_DIR ?= /usr/bin
 

@@ -20,16 +20,7 @@ static inline void cow_free(void *ptr)
 	free(ptr);
 }
 
-static inline int cow_printf(char *fmt, ...)
-{
-	va_list args;
-	int n;
-
-	va_start(args, fmt);
-	n = vprintf(fmt, args);
-	va_end(args);
-	return(n);
-}
+#define cow_printf printf
 
 static inline char *cow_strdup(char *str)
 {
@@ -40,17 +31,17 @@ static inline int cow_seek_file(int fd, __u64 offset)
 {
 	__u64 actual;
 
-	actual = lseek(fd, offset, SEEK_SET);
+	actual = lseek64(fd, offset, SEEK_SET);
 	if(actual != offset)
 		return(-errno);
 	return(0);
 }
 
-static inline int cow_file_size(char *file, long long *size_out)
+static inline int cow_file_size(char *file, __u64 *size_out)
 {
-	struct stat buf;
+	struct stat64 buf;
 
-	if(stat(file, &buf) == -1){
+	if (stat64(file, &buf) == -1) {
 		cow_printf("Couldn't stat \"%s\" : errno = %d\n", file, errno);
 		return(-errno);
 	}
@@ -76,9 +67,13 @@ static inline int cow_file_size(char *file, long long *size_out)
 	return(0);
 }
 
-static inline int cow_write_file(int fd, char *buf, int size)
+static inline int cow_write_file(int fd, void *buf, int size)
 {
-	return(write(fd, buf, size));
+	int ret = write(fd, buf, size);
+
+	if (ret == -1)
+		return(-errno);
+	return(ret);
 }
 
 #endif
