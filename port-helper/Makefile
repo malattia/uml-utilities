@@ -1,18 +1,8 @@
-OBJS = port-helper.o
-BIN = port-helper
-CFLAGS ?= -g -Wall
-LIBS = ../lib/libuml.a
+BIN := port-helper
+LIBS := ../lib/libuml.a
 
-LIB_DIR ?= /usr/lib/uml
+# this tools is to be executed by kernel, not by user,
+# thus installing to LIB_DIR
+override BIN_DIR = $(LIB_DIR)
 
-all : $(BIN)
-
-$(BIN) : $(OBJS)
-	$(CC) $(CFLAGS) -o $(BIN) $(OBJS) $(LIBS)
-
-clean : 
-	rm -f $(BIN) $(OBJS) *~
-
-install : $(BIN)
-	install -d $(DESTDIR)$(LIB_DIR)
-	install -s $(BIN) $(DESTDIR)$(LIB_DIR)
+include ../config.mk
