@@ -1,17 +1,7 @@
-OBJS = jail_uml.o
-BIN = jail_uml
-CFLAGS ?= -g -Wall
+BIN := jail_uml
+override BIN_DIR = $(SBIN_DIR)
 
-SBIN_DIR ?= /usr/sbin
+clean::
+	rm -rf cell[0-9]* core* tty_log_cell*
 
-all : $(BIN)
-
-$(BIN) : $(OBJS)
-	$(CC) $(CFLAGS) -o $(BIN) $(OBJS)
-
-install : $(BIN)
-	install -d $(DESTDIR)$(SBIN_DIR)
-	install -s $(BIN) $(DESTDIR)$(SBIN_DIR)
-
-clean :
-	rm -rf *~ $(BIN) $(OBJS) cell[0-9]* core* tty_log_cell*
+include ../config.mk

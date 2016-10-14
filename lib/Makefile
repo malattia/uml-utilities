@@ -1,13 +1,4 @@
-LIB = libuml.a
-OBJS = rights.o
-CFLAGS = -g -Wall
+LIB := libuml.a
+SKIP_INSTALL := 1
 
-all : $(LIB)
-
-$(LIB) : $(OBJS)
-	$(AR) r $@ $<
-
-clean :
-	rm -f $(LIB) $(OBJS)
-
-install :
+include ../config.mk
